@@ -122,7 +122,7 @@ function build() {
     const CHUNK = 12 * 1024 * 1024;
     const parts = [];
     for (let o = 0, n = 0; o < wasm.length; o += CHUNK, n++) {
-      const name = `kernel.${n}.bin`;
+      const name = `kernel.${n}.wasm`;
       fs.writeFileSync(path.join(dir, 'oc', name), wasm.subarray(o, o + CHUNK));
       parts.push(name);
     }
