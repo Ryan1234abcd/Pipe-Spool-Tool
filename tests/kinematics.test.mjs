@@ -6,25 +6,25 @@ import { solve, openPorts, pipePorts, applyPoint } from '../web/js/kinematics.js
 const close = (a, b, msg) => a.forEach((v, i) => assert.ok(Math.abs(v - b[i]) < 1e-6, `${msg}: ${a} != ${b}`));
 
 const elbow = (R) => [
-  { name: 'A', origin: [0, 0, 0], dir: [-1, 0, 0], up: [0, 0, 1], size: 'DN50' },
-  { name: 'B', origin: [R, R, 0], dir: [0, 1, 0], up: [0, 0, 1], size: 'DN50' },
+  { name: 'A', origin: [0, 0, 0], dir: [-1, 0, 0], up: [0, 0, 1], od: 60.3 },
+  { name: 'B', origin: [R, R, 0], dir: [0, 1, 0], up: [0, 0, 1], od: 60.3 },
 ];
 
 function portsOf(n) {
-  if (n.type === 'pipe') return pipePorts(n.size, n.length);
+  if (n.type === 'pipe') return pipePorts(n.od, n.length);
   if (n.type === 'elbow90') return elbow(76);
   // valve modelled along Y like a manufacturer download
   if (n.type === 'valve') return [
-    { name: 'A', origin: [0, -89, 0], dir: [0, -1, 0], up: [0, 0, 1], size: 'DN50' },
-    { name: 'B', origin: [0, 89, 0], dir: [0, 1, 0], up: [0, 0, 1], size: 'DN50' },
+    { name: 'A', origin: [0, -89, 0], dir: [0, -1, 0], up: [0, 0, 1], od: 60.3 },
+    { name: 'B', origin: [0, 89, 0], dir: [0, 1, 0], up: [0, 0, 1], od: 60.3 },
   ];
   return null;
 }
 
 test('straight run: pipe + pipe', () => {
   const nodes = [
-    { id: 'a', type: 'pipe', size: 'DN50', length: 500, port: 'A', startDir: '+X' },
-    { id: 'b', type: 'pipe', size: 'DN50', length: 300, port: 'A', parent: 'a', parentPort: 'B' },
+    { id: 'a', type: 'pipe', od: 60.3, length: 500, port: 'A', startDir: '+X' },
+    { id: 'b', type: 'pipe', od: 60.3, length: 300, port: 'A', parent: 'a', parentPort: 'B' },
   ];
   const { placed, errors } = solve(nodes, portsOf);
   assert.equal(errors.length, 0);
@@ -33,8 +33,8 @@ test('straight run: pipe + pipe', () => {
 
 test('elbow roll turns the branch', () => {
   const base = [
-    { id: 'a', type: 'pipe', size: 'DN50', length: 500, port: 'A', startDir: '+X' },
-    { id: 'e', type: 'elbow90', size: 'DN50', port: 'A', parent: 'a', parentPort: 'B', roll: 0 },
+    { id: 'a', type: 'pipe', od: 60.3, length: 500, port: 'A', startDir: '+X' },
+    { id: 'e', type: 'elbow90', od: 60.3, port: 'A', parent: 'a', parentPort: 'B', roll: 0 },
   ];
   let r = solve(base, portsOf);
   // roll 0: elbow turns towards local +Y. With up=+Z and dir=+X, local Y maps to world +Y.
@@ -50,8 +50,8 @@ test('elbow roll turns the branch', () => {
 
 test('valve along Y keeps its stem up when inline on an X run', () => {
   const nodes = [
-    { id: 'a', type: 'pipe', size: 'DN50', length: 100, port: 'A', startDir: '+X' },
-    { id: 'v', type: 'valve', size: 'DN50', port: 'A', parent: 'a', parentPort: 'B', gap: 3 },
+    { id: 'a', type: 'pipe', od: 60.3, length: 100, port: 'A', startDir: '+X' },
+    { id: 'v', type: 'valve', od: 60.3, port: 'A', parent: 'a', parentPort: 'B', gap: 3 },
   ];
   const { placed } = solve(nodes, portsOf);
   const M = placed.get('v').matrix;
@@ -61,8 +61,8 @@ test('valve along Y keeps its stem up when inline on an X run', () => {
 
 test('vertical start and open ports', () => {
   const nodes = [
-    { id: 'a', type: 'pipe', size: 'DN50', length: 250, port: 'A', startDir: '+Z' },
-    { id: 'e', type: 'elbow90', size: 'DN50', port: 'A', parent: 'a', parentPort: 'B' },
+    { id: 'a', type: 'pipe', od: 60.3, length: 250, port: 'A', startDir: '+Z' },
+    { id: 'e', type: 'elbow90', od: 60.3, port: 'A', parent: 'a', parentPort: 'B' },
   ];
   const { placed } = solve(nodes, portsOf);
   close(placed.get('a').ports[1].origin, [0, 0, 250], 'riser');
@@ -72,8 +72,8 @@ test('vertical start and open ports', () => {
 
 test('size mismatch is reported', () => {
   const nodes = [
-    { id: 'a', type: 'pipe', size: 'DN80', length: 250, port: 'A' },
-    { id: 'b', type: 'pipe', size: 'DN50', length: 250, port: 'A', parent: 'a', parentPort: 'B' },
+    { id: 'a', type: 'pipe', od: 88.9, length: 250, port: 'A' },
+    { id: 'b', type: 'pipe', od: 60.3, length: 250, port: 'A', parent: 'a', parentPort: 'B' },
   ];
   const { errors } = solve(nodes, portsOf);
   assert.equal(errors[0].kind, 'size');

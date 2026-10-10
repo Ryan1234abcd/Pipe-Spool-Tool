@@ -5,10 +5,16 @@
   unless the user asks for one.
 
 ## Project
-- Backend: `spooltool/` (FastAPI + CadQuery/OpenCascade). Frontend: `web/` (plain ES modules + three.js, no build step).
-- Port placement maths lives in `web/js/kinematics.js`; fitting port positions are defined in
-  `spooltool/fittings.py` and mirrored in `web/js/fittings-client.js` (keep them identical).
-- After changing anything in `web/` or `spooltool/data/pipe_data.json`, rebuild the single-file demo:
-  `python scripts/build_standalone.py` (writes `demo/pipe-spool-tool.html`) and commit it.
-- Tests: `python -m pytest tests` and `node --test tests/*.test.mjs`.
-- Browser-hosted pages can't use `alert/confirm/prompt` or downloads – use `ask()` / `copyText()` from `web/js/api.js`.
+- Browser-only app – no server, nothing for the user to install. The deliverable is the single file
+  `pipe-spool-tool.html`, built from `web/` by `npm run build` (`scripts/build.mjs`). Always rebuild and
+  commit it after changing anything in `web/` or `library/Samples/`.
+- CAD: OpenCascade WebAssembly (`replicad-opencascadejs`, pinned in `package.json`) in a Web Worker
+  (`web/js/cad.js`, `web/js/cad-worker.js`). The 23 MB kernel is loaded from `oc/` next to the page if
+  present, else from jsDelivr/unpkg (`web/js/cad-client.js`). `--hosted DIR` writes the split kernel.
+- All fittings/valves come from the user's STEP library folder (`web/js/library.js`); port set-ups live
+  in `<part>.stp.json` next to each STEP file (or IndexedDB when the folder isn't writable). Only straight
+  pipe is generated. Ports carry the connecting pipe `od` (mm); sizes are matched by OD (`pipe-types.js`).
+- Placement maths: `web/js/kinematics.js`. Port detection: `web/js/detect.js`.
+- Tests: `npm test` (node; runs the real OpenCascade build).
+- Pages hosted on claude.ai can't use `alert/confirm/prompt` or plain downloads – use `ask()` / `saveFile()`
+  from `web/js/ui.js` (`saveFile` uses the host's downloads capability and zips STEP files there).

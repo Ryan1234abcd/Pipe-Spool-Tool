@@ -2,13 +2,10 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Pipe Spool Tool</title>
-  <link rel="stylesheet" href="style.css">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22%3E%3Cpath d=%22M1 6h8a2 2 0 0 1 2 2v7h4V8a6 6 0 0 0-6-6H1z%22 fill=%22%23e8792b%22/%3E%3C/svg%3E">
-  <script type="importmap">
-    { "imports": { "three": "./vendor/three.module.min.js", "three/addons/": "./vendor/" } }
-  </script>
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <header>
@@ -17,13 +14,14 @@
     <button data-tab="builder" class="active">Spool builder</button>
     <button data-tab="library">Library setup</button>
   </nav>
+  <div id="engine" class="engine" hidden>Loading CAD engine…</div>
   <div class="project">
     <input id="projectName" value="Spool-01" title="Spool name (used for the STEP file)">
     <button id="btnNew" title="New spool">New</button>
     <button id="btnOpen" title="Open a saved spool">Open…</button>
-    <button id="btnSave" title="Save spool (Ctrl+S)">Save</button>
+    <button id="btnSave" title="Save the spool in this browser (Ctrl+S)">Save</button>
     <button id="btnBom" title="Bill of materials / cut list">BOM</button>
-    <button id="btnExport" class="primary" title="Export the combined STEP file">Export STEP</button>
+    <button id="btnExport" class="primary" title="Build and download the combined STEP file">Export STEP</button>
   </div>
 </header>
 
@@ -32,18 +30,26 @@
   <section id="tab-builder" class="tab active">
     <aside class="left">
       <div class="panel">
-        <h3>Pipe spec</h3>
-        <label>Standard <select id="selStandard"></select></label>
-        <label>Schedule <select id="selSchedule"></select></label>
-        <label>Start size <select id="selSize"></select></label>
+        <h3>STEP library</h3>
+        <div id="libFolder" class="libfolder"></div>
+        <div class="row">
+          <button id="btnOpenLib" title="Choose the folder on your computer that holds your STEP fittings and valves">Open folder…</button>
+          <button id="btnReconnect" hidden title="Open the folder you used last time">Reconnect</button>
+        </div>
+        <input type="file" id="libInput" webkitdirectory directory multiple hidden>
       </div>
       <div class="panel">
-        <h3>Fittings <span class="hint">click to add at the orange port</span></h3>
-        <div id="palette" class="palette"></div>
+        <h3>Pipe</h3>
+        <label>Type <select id="selType"></select></label>
+        <label>Start size <select id="selSize"></select></label>
+        <button id="btnPipe" class="wide" title="Add a pipe at the orange end (P)">Add pipe <kbd>P</kbd></button>
       </div>
       <div class="panel grow">
-        <h3>Library parts</h3>
-        <input id="partSearch" placeholder="Search parts…">
+        <h3>Fittings &amp; valves <span class="hint">click to add at the orange end</span></h3>
+        <div class="row">
+          <input id="partSearch" placeholder="Search… (F)" class="grow">
+          <label class="inline" title="Show parts that don't fit the selected pipe type"><input type="checkbox" id="chkAllParts"> All</label>
+        </div>
         <div id="partList" class="list"></div>
       </div>
     </aside>
@@ -79,13 +85,12 @@
       <details class="panel help">
         <summary>Keyboard shortcuts</summary>
         <table>
-          <tr><td>P</td><td>Pipe</td></tr>
-          <tr><td>E / Shift+E</td><td>Elbow 90° / 45°</td></tr>
-          <tr><td>T</td><td>Tee</td></tr>
-          <tr><td>F</td><td>Weld neck flange</td></tr>
+          <tr><td>P</td><td>Add pipe</td></tr>
+          <tr><td>F or /</td><td>Search parts, Enter adds the first match</td></tr>
+          <tr><td>[ / ]</td><td>Insert before / after the selected component</td></tr>
           <tr><td>R / Shift+R</td><td>Roll selected +90° / −90°</td></tr>
-          <tr><td>X</td><td>Flip (attach by the other port)</td></tr>
-          <tr><td>N</td><td>Next open port</td></tr>
+          <tr><td>X</td><td>Flip (attach by the other connection)</td></tr>
+          <tr><td>N</td><td>Next open end</td></tr>
           <tr><td>Del</td><td>Delete selected (and downstream)</td></tr>
           <tr><td>Ctrl+Z / Ctrl+Y</td><td>Undo / redo</td></tr>
           <tr><td>Home</td><td>Zoom to fit</td></tr>
@@ -101,8 +106,7 @@
       <div class="panel">
         <h3>STEP library</h3>
         <div class="hint" id="libPath"></div>
-        <label class="file-btn" id="libUploadBtn">Add STEP files…<input type="file" id="libUpload" accept=".stp,.step" multiple></label>
-        <button id="libRefresh">Refresh</button>
+        <button id="libOpen">Open folder…</button>
       </div>
       <div class="panel grow">
         <input id="libSearch" placeholder="Search…">
@@ -120,7 +124,7 @@
         <label><input type="checkbox" id="libShowAll"> Show all circle candidates</label>
       </div>
       <div id="libViewport" class="viewport"></div>
-      <div id="libStatus" class="status">Select a STEP file to set up its connection ports.</div>
+      <div id="libStatus" class="status">Select a STEP file to set up its connections.</div>
     </div>
     <aside class="right wide">
       <div class="panel grow" id="libEditor"><p class="hint">No part selected.</p></div>
@@ -133,8 +137,9 @@
   <div id="projectList" class="list"></div>
   <div class="row">
     <label class="file-btn">Import .json…<input type="file" id="importJson" accept=".json"></label>
+    <button id="btnDownloadJson" title="Download the current spool as a .json file">Download current .json</button>
     <span class="grow"></span>
-    <button data-close>Cancel</button>
+    <button data-close>Close</button>
   </div>
 </dialog>
 
@@ -143,7 +148,6 @@
   <div id="bomBody"></div>
   <div class="row">
     <button id="bomCsv">Download CSV</button>
-    <button id="bomJson">Download spool .json</button>
     <span class="grow"></span>
     <button data-close>Close</button>
   </div>
@@ -151,9 +155,10 @@
 
 <dialog id="dlgExport">
   <h3>Export STEP</h3>
-  <label><input type="checkbox" id="expFuse" checked> Fuse into a single solid body (recommended for Revit families)</label>
-  <label><input type="checkbox" id="expHollow" checked> Hollow pipes &amp; fittings (show bore)</label>
-  <p class="hint">Fusing complex manufacturer models can take a while. If it fails the parts are exported as one multi-body file instead.</p>
+  <label><input type="checkbox" id="expFuse" checked> Merge into a single solid body (recommended for Revit families)</label>
+  <label><input type="checkbox" id="expHollow" checked> Hollow pipes (show the bore)</label>
+  <p class="hint">Everything runs in this browser. Merging large manufacturer models can take a minute.
+    If they can't be merged, the file still contains every part as separate bodies.</p>
   <div class="row">
     <span class="grow"></span>
     <button data-close>Cancel</button>
@@ -162,20 +167,6 @@
   <div id="expMsg" class="hint"></div>
 </dialog>
 
-<dialog id="dlgStatic">
-  <h3>STEP export runs in the full app</h3>
-  <p>This page is the in-browser demo. Building the STEP file uses the OpenCascade CAD kernel, which runs in the
-    Pipe Spool Tool on your PC (double-click <code>start.bat</code>).</p>
-  <p>To carry this spool across, copy it here, save the text as a <code>.json</code> file, then use
-    <b>Open… › Import .json</b> in the full app and press Export STEP.</p>
-  <div class="row">
-    <button id="staticCopy" class="primary">Copy spool .json</button>
-    <span class="grow"></span>
-    <button data-close>Close</button>
-  </div>
-</dialog>
-
 <div id="toast"></div>
-<script type="module" src="js/app.js"></script>
 </body>
 </html>

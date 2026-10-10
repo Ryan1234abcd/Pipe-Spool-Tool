@@ -10,6 +10,8 @@
 //
 // Matrices are row-major 4x4 arrays: [[r00,r01,r02,tx],[...],[...],[0,0,0,1]].
 
+export const OD_TOLERANCE = 0.6;
+
 export const IDENTITY = () => [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]];
 
 export const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
@@ -129,8 +131,8 @@ export function solve(nodes, portsOf) {
     const matrix = attachTransform(target, own, n.roll, parent ? n.gap : 0);
     const worldPorts = ports.map((p) => transformPort(matrix, p));
     const entry = { matrix, ports: worldPorts, attachPort: own.name };
-    if (parent && target.size && own.size && target.size !== own.size) {
-      errors.push({ id: n.id, message: `Size mismatch: ${own.size} joined to ${target.size}`, kind: 'size' });
+    if (parent && target.od > 0 && own.od > 0 && Math.abs(target.od - own.od) > OD_TOLERANCE) {
+      errors.push({ id: n.id, message: `Size mismatch: Ø${own.od} joined to Ø${target.od}`, kind: 'size' });
     }
     placed.set(n.id, entry);
     for (const c of children.get(n.id) || []) queue.push([c, entry]);
@@ -158,10 +160,10 @@ export function openPorts(nodes, placed) {
   return out;
 }
 
-/** Pipe ports (pipes are generated client side). */
-export function pipePorts(size, length) {
+/** Pipe ports (pipes are generated, not from STEP). */
+export function pipePorts(od, length) {
   return [
-    { name: 'A', origin: [0, 0, 0], dir: [-1, 0, 0], up: [0, 0, 1], size, kind: 'weld' },
-    { name: 'B', origin: [length, 0, 0], dir: [1, 0, 0], up: [0, 0, 1], size, kind: 'weld' },
+    { name: 'A', origin: [0, 0, 0], dir: [-1, 0, 0], up: [0, 0, 1], od, kind: 'pipe' },
+    { name: 'B', origin: [length, 0, 0], dir: [1, 0, 0], up: [0, 0, 1], od, kind: 'pipe' },
   ];
 }

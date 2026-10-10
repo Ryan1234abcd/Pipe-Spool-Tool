@@ -1,0 +1,14 @@
+{
+  "name": "pipe-spool-tool",
+  "private": true,
+  "type": "module",
+  "description": "Browser-only valve station / pipe spool builder that exports a combined STEP file",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "devDependencies": {
+    "replicad-opencascadejs": "1.1.0",
+    "three": "0.160.0"
+  }
+}

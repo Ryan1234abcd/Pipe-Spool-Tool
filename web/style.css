@@ -168,7 +168,6 @@ dialog.ask { min-width: 320px; }
 dialog.ask input { width: 100%; }
 dialog::backdrop { background: rgba(10, 14, 18, .45); }
 code { font-size: 12px; }
-.static #libUploadBtn { display: none; }
 
 /* phones and narrow windows: stack the panes and let the page scroll */
 @media (max-width: 900px) {
@@ -183,4 +182,14 @@ code { font-size: 12px; }
   .viewport { min-height: 55vh; }
   dialog { min-width: 0; width: calc(100vw - 32px); }
 }
-.static .brand::after { content: "browser demo"; margin-left: 8px; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; padding: 1px 6px; border-radius: 3px; background: var(--accent); color: var(--on-accent); vertical-align: 2px; }
+
+.engine { font-size: 12px; color: var(--on-chrome-muted); background: var(--chrome-2); padding: 3px 10px; border-radius: 10px; font-variant-numeric: tabular-nums; }
+.engine.bad { background: var(--bad); color: var(--on-chrome); }
+.panel .row { display: flex; gap: 6px; align-items: center; margin-top: 6px; flex-wrap: wrap; }
+.panel .row input.grow { min-width: 0; }
+.libfolder { margin-bottom: 2px; overflow-wrap: anywhere; }
+button.wide { width: 100%; margin-top: 6px; display: flex; justify-content: space-between; align-items: center; }
+label.inline { display: inline-flex; gap: 3px; align-items: center; margin: 0; white-space: nowrap; }
+#props .btns.top { margin: 0 0 8px; }
+#props .btns.top button { flex: 1; }
+.scroll-x { overflow-x: auto; }

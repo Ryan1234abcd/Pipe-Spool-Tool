@@ -1,0 +1,46 @@
+{
+  "name": "Weld neck flange DN50 PN16",
+  "category": "Fittings \u00b7 Steel EN 10255",
+  "ports": [
+    {
+      "name": "A",
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "dir": [
+        -1.0,
+        0.0,
+        0.0
+      ],
+      "up": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "od": 60.3,
+      "kind": "weld"
+    },
+    {
+      "name": "B",
+      "origin": [
+        64.0,
+        0.0,
+        0.0
+      ],
+      "dir": [
+        1.0,
+        0.0,
+        0.0
+      ],
+      "up": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "od": 60.3,
+      "kind": "flange"
+    }
+  ]
+}

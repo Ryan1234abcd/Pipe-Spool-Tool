@@ -144,8 +144,8 @@ export class Viewer {
 /** BufferGeometry from the server mesh format {positions, indices}. */
 export function geometryFromMesh(mesh) {
   const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.Float32BufferAttribute(mesh.positions, 3));
-  g.setIndex(mesh.indices);
+  g.setAttribute('position', new THREE.BufferAttribute(Float32Array.from(mesh.positions), 3));
+  g.setIndex(new THREE.BufferAttribute(Uint32Array.from(mesh.indices), 1));
   g.computeVertexNormals();
   g.userData.shared = true;
   return g;
