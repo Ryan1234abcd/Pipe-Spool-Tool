@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { CSS2DObject } from 'three/addons/CSS2DRenderer.js';
 import { Viewer, geometryFromMesh, toMatrix4 } from './viewer.js';
 import { solve, openPorts, pipePorts, START_DIRS } from './kinematics.js';
-import { api, download, toast, esc } from './api.js';
+import { api, download, toast, esc, ask, copyText, isStatic } from './api.js';
 import { LibraryEditor } from './library-editor.js';
 
 // ------------------------------------------------------------------ constants
@@ -95,7 +95,7 @@ function fittingParams(n) {
 function fittingEntry(n) {
   const key = JSON.stringify(fittingParams(n));
   if (!fittingCache.has(key)) {
-    const p = api.fitting(fittingParams(n)).then((r) => ({ geometry: geometryFromMesh(r.mesh), ports: r.ports }));
+    const p = api.fitting(fittingParams(n)).then((r) => ({ geometry: r.geometry || geometryFromMesh(r.mesh), ports: r.ports }));
     p.catch(() => fittingCache.delete(key));
     fittingCache.set(key, p);
   }
@@ -545,8 +545,8 @@ function renderProps() {
   on('propFlip', 'click', () => flipNode(n.id));
   on('propDelete', 'click', () => deleteNode(n.id));
   on('propRejoin', 'click', () => deleteNode(n.id, true));
-  on('propSplit', 'click', () => {
-    const v = parseFloat(prompt('Split at distance from the upstream end (mm):', Math.round(n.length / 2)));
+  on('propSplit', 'click', async () => {
+    const v = parseFloat(await ask('Split at distance from the upstream end (mm):', { input: String(Math.round(n.length / 2)), ok: 'Split' }));
     if (v) splitPipe(n.id, v);
   });
   el.querySelectorAll('[data-roll]').forEach((b) => b.addEventListener('click', () => rollNode(n.id, Number(b.dataset.roll))));
@@ -606,9 +606,10 @@ function spoolData() {
 
 async function exportStep() {
   if (!state.nodes.length) { toast('Nothing to export', true); return; }
+  if (isStatic) { $('dlgStatic').showModal(); return; }
   if (solved.errors.some((e) => e.kind !== 'size')) {
-    if (!confirm('Some components could not be placed and will be left out. Export anyway?')) return;
-  } else if (solved.errors.length && !confirm('There are size mismatches in the spool. Export anyway?')) return;
+    if (!await ask('Some components could not be placed and will be left out. Export anyway?', { ok: 'Export' })) return;
+  } else if (solved.errors.length && !await ask('There are size mismatches in the spool. Export anyway?', { ok: 'Export' })) return;
   $('expMsg').textContent = '';
   $('dlgExport').showModal();
 }
@@ -717,8 +718,8 @@ function wire() {
     draw(); renderTree(); renderProps();
   };
   $('projectName').onchange = (e) => { state.name = e.target.value.trim() || 'Spool'; };
-  $('btnNew').onclick = () => {
-    if (state.nodes.length && !confirm('Start a new spool? Unsaved changes are lost.')) return;
+  $('btnNew').onclick = async () => {
+    if (state.nodes.length && !await ask('Start a new spool? Unsaved changes are lost.', { ok: 'New spool' })) return;
     loadSpool({ name: 'Spool-01', standard: state.standard, schedule: state.schedule, nodes: [] });
   };
   $('btnSave').onclick = saveProject;
@@ -738,9 +739,16 @@ function wire() {
   $('bomCsv').onclick = () => {
     const q = (v) => `"${String(v).replace(/"/g, '""')}"`;
     const csv = ['Description,Size,Qty,Notes', ...bom().map((r) => [r.desc, r.size, r.qty, r.notes].map(q).join(','))].join('\r\n');
-    download(`${state.name}-BOM.csv`, csv, 'text/csv');
+    if (isStatic) copyText(csv).then((ok) => toast(ok ? 'BOM copied as CSV – paste it into Excel' : 'Copy was blocked by the browser', !ok));
+    else download(`${state.name}-BOM.csv`, csv, 'text/csv');
   };
-  $('bomJson').onclick = () => download(`${state.name}.json`, JSON.stringify(spoolData(), null, 2), 'application/json');
+  $('bomJson').onclick = () => copySpoolOr(() => download(`${state.name}.json`, JSON.stringify(spoolData(), null, 2), 'application/json'));
+  $('staticCopy').onclick = () => copySpoolOr(null);
+  if (isStatic) {
+    $('bomCsv').textContent = 'Copy CSV';
+    $('bomJson').textContent = 'Copy spool .json';
+    document.body.classList.add('static');
+  }
   $('btnExport').onclick = exportStep;
   $('expGo').onclick = doExport;
   document.querySelectorAll('dialog [data-close]').forEach((b) => b.addEventListener('click', () => b.closest('dialog').close()));
@@ -790,6 +798,13 @@ function wire() {
     } else if (k === 'home') viewer.fit();
     else if (k === 'escape') { state.selected = null; draw(); renderTree(); renderProps(); }
   });
+}
+
+function copySpoolOr(fallback) {
+  if (!isStatic && fallback) { fallback(); return; }
+  copyText(JSON.stringify(spoolData(), null, 2)).then((ok) => toast(ok
+    ? 'Spool copied. Save it as a .json file and use Open… › Import in the full app.'
+    : 'Copy was blocked by the browser', !ok, 6000));
 }
 
 // ---------------------------------------------------------------------- init

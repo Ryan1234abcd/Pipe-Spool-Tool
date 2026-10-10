@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { CSS2DObject } from 'three/addons/CSS2DRenderer.js';
 import { Viewer } from './viewer.js';
-import { api, toast, esc } from './api.js';
+import { api, toast, esc, ask, isStatic } from './api.js';
 import { defaultUp } from './kinematics.js';
 
 const KINDS = ['flange', 'weld', 'thread', 'socket', 'other'];
@@ -21,7 +21,11 @@ export class LibraryEditor {
     this._wire();
   }
 
-  setLibraryPath(p) { this.$('libPath').textContent = p; }
+  setLibraryPath(p) {
+    this.$('libPath').textContent = isStatic
+      ? 'Demo build: the three sample parts are built in. Adding your own STEP files needs the full app (start.bat).'
+      : p;
+  }
 
   _wire() {
     this.$('libRefresh').onclick = () => this.refresh();
@@ -249,7 +253,7 @@ export class LibraryEditor {
     if (!used.length) { toast('Tick at least one port', true); return; }
     const names = used.map((r) => r.name);
     if (names.some((n) => !n) || new Set(names).size !== names.length) { toast('Port names must be unique and not empty', true); return; }
-    if (used.some((r) => !r.size) && !confirm('Some ports have no size. Size checks will be skipped for them. Save anyway?')) return;
+    if (used.some((r) => !r.size) && !await ask('Some ports have no size. Size checks will be skipped for them. Save anyway?', { ok: 'Save' })) return;
     try {
       const saved = await api.savePart(meta.id, {
         name: meta.name, category: meta.category, notes: meta.notes,

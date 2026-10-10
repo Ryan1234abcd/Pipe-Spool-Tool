@@ -101,7 +101,7 @@
       <div class="panel">
         <h3>STEP library</h3>
         <div class="hint" id="libPath"></div>
-        <label class="file-btn">Add STEP files…<input type="file" id="libUpload" accept=".stp,.step" multiple></label>
+        <label class="file-btn" id="libUploadBtn">Add STEP files…<input type="file" id="libUpload" accept=".stp,.step" multiple></label>
         <button id="libRefresh">Refresh</button>
       </div>
       <div class="panel grow">
@@ -160,6 +160,19 @@
     <button id="expGo" class="primary">Export</button>
   </div>
   <div id="expMsg" class="hint"></div>
+</dialog>
+
+<dialog id="dlgStatic">
+  <h3>STEP export runs in the full app</h3>
+  <p>This page is the in-browser demo. Building the STEP file uses the OpenCascade CAD kernel, which runs in the
+    Pipe Spool Tool on your PC (double-click <code>start.bat</code>).</p>
+  <p>To carry this spool across, copy it here, save the text as a <code>.json</code> file, then use
+    <b>Open… › Import .json</b> in the full app and press Export STEP.</p>
+  <div class="row">
+    <button id="staticCopy" class="primary">Copy spool .json</button>
+    <span class="grow"></span>
+    <button data-close>Close</button>
+  </div>
 </dialog>
 
 <div id="toast"></div>

@@ -14,6 +14,22 @@ Revit family as a single body.
 
 ![workflow](docs/workflow.png)
 
+## Try it in the browser first
+
+Open **`demo/pipe-spool-tool.html`** in a browser (double-click it; no install needed).
+It's the same spool builder with the three sample parts built in. It runs completely
+in the page:
+
+* Fittings are drawn in the browser from the same dimension tables.
+  Port positions match the full app exactly.
+* Spools are saved in your browser. BOM and spool data are copied to the clipboard.
+* Exporting STEP and adding your own STEP files need the full app below.
+  Use **Export STEP › Copy spool .json**, save the text as a `.json` file, and import it
+  into the full app with **Open… › Import .json**.
+
+Rebuild the demo after changing the web UI or the pipe data with
+`python scripts/build_standalone.py`.
+
 ## Install and run
 
 Requires **Python 3.10 – 3.13**. CAD work uses [CadQuery](https://cadquery.readthedocs.io/) / OpenCascade,
@@ -116,6 +132,7 @@ spooltool/        Python backend (FastAPI + CadQuery)
 web/              browser UI (three.js, no build step)
   js/kinematics.js  port-to-port placement maths (shared convention with fittings.py)
 scripts/make_sample_library.py   regenerates the sample STEP parts
+scripts/build_standalone.py      builds demo/pipe-spool-tool.html (single-file browser demo)
 tests/            pytest (backend) and node:test (placement maths)
 ```
 

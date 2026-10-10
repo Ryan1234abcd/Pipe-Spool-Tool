@@ -10,6 +10,9 @@ export class Viewer {
     this.container = container;
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0xf4f6f9);
+    this.applyTheme();
+    window.matchMedia?.('(prefers-color-scheme: dark)').addEventListener?.('change', () => this.applyTheme());
+    new MutationObserver(() => this.applyTheme()).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 
     this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, -1e6, 1e6);
     this.camera.up.set(0, 0, 1);
@@ -43,6 +46,13 @@ export class Viewer {
     new ResizeObserver(() => this.resize()).observe(container);
     this.resize();
     this.setView('iso');
+  }
+
+  /** Viewport background follows the page's --viewport colour token (light/dark). */
+  applyTheme() {
+    const c = getComputedStyle(this.container).getPropertyValue('--viewport').trim();
+    if (c) { try { this.scene.background.set(c); } catch { /* keep default */ } }
+    if (this.renderer) this.render();
   }
 
   _makeAxes() {
