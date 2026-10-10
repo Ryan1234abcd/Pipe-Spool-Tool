@@ -1,0 +1,703 @@
+{
+ "_comment": "Edit this file to add pipe standards, schedules or change fitting/flange dimensions. All dimensions in mm. Fitting dimensions per ASME B16.9 and flange dimensions per ASME B16.5 Class 150 (approximate).",
+ "standards": {
+  "ASME B36.10": {
+   "description": "ASME B36.10M carbon steel pipe",
+   "defaultSchedule": "Sch40",
+   "sizes": {
+    "DN15": {
+     "od": 21.3,
+     "wall": {
+      "Sch10": 2.11,
+      "Sch40": 2.77,
+      "Sch80": 3.73
+     }
+    },
+    "DN20": {
+     "od": 26.7,
+     "wall": {
+      "Sch10": 2.11,
+      "Sch40": 2.87,
+      "Sch80": 3.91
+     }
+    },
+    "DN25": {
+     "od": 33.4,
+     "wall": {
+      "Sch10": 2.77,
+      "Sch40": 3.38,
+      "Sch80": 4.55
+     }
+    },
+    "DN32": {
+     "od": 42.2,
+     "wall": {
+      "Sch10": 2.77,
+      "Sch40": 3.56,
+      "Sch80": 4.85
+     }
+    },
+    "DN40": {
+     "od": 48.3,
+     "wall": {
+      "Sch10": 2.77,
+      "Sch40": 3.68,
+      "Sch80": 5.08
+     }
+    },
+    "DN50": {
+     "od": 60.3,
+     "wall": {
+      "Sch10": 2.77,
+      "Sch40": 3.91,
+      "Sch80": 5.54
+     }
+    },
+    "DN65": {
+     "od": 73.0,
+     "wall": {
+      "Sch10": 3.05,
+      "Sch40": 5.16,
+      "Sch80": 7.01
+     }
+    },
+    "DN80": {
+     "od": 88.9,
+     "wall": {
+      "Sch10": 3.05,
+      "Sch40": 5.49,
+      "Sch80": 7.62
+     }
+    },
+    "DN100": {
+     "od": 114.3,
+     "wall": {
+      "Sch10": 3.05,
+      "Sch40": 6.02,
+      "Sch80": 8.56
+     }
+    },
+    "DN125": {
+     "od": 141.3,
+     "wall": {
+      "Sch10": 3.4,
+      "Sch40": 6.55,
+      "Sch80": 9.53
+     }
+    },
+    "DN150": {
+     "od": 168.3,
+     "wall": {
+      "Sch10": 3.4,
+      "Sch40": 7.11,
+      "Sch80": 10.97
+     }
+    },
+    "DN200": {
+     "od": 219.1,
+     "wall": {
+      "Sch10": 3.76,
+      "Sch40": 8.18,
+      "Sch80": 12.7
+     }
+    },
+    "DN250": {
+     "od": 273.0,
+     "wall": {
+      "Sch10": 4.19,
+      "Sch40": 9.27,
+      "Sch80": 15.09
+     }
+    },
+    "DN300": {
+     "od": 323.8,
+     "wall": {
+      "Sch10": 4.57,
+      "Sch40": 10.31,
+      "Sch80": 17.48
+     }
+    },
+    "DN350": {
+     "od": 355.6,
+     "wall": {
+      "Sch10": 6.35,
+      "Sch40": 11.13,
+      "Sch80": 19.05
+     }
+    },
+    "DN400": {
+     "od": 406.4,
+     "wall": {
+      "Sch10": 6.35,
+      "Sch40": 12.7,
+      "Sch80": 21.44
+     }
+    },
+    "DN450": {
+     "od": 457.0,
+     "wall": {
+      "Sch10": 6.35,
+      "Sch40": 14.27,
+      "Sch80": 23.83
+     }
+    },
+    "DN500": {
+     "od": 508.0,
+     "wall": {
+      "Sch10": 6.35,
+      "Sch40": 15.09,
+      "Sch80": 26.19
+     }
+    },
+    "DN600": {
+     "od": 610.0,
+     "wall": {
+      "Sch10": 6.35,
+      "Sch40": 17.48,
+      "Sch80": 30.96
+     }
+    }
+   }
+  },
+  "EN 10220": {
+   "description": "EN 10220 / EN 10216 steel tube (common refrigeration walls)",
+   "defaultSchedule": "Standard",
+   "sizes": {
+    "DN15": {
+     "od": 21.3,
+     "wall": {
+      "Standard": 2.0
+     }
+    },
+    "DN20": {
+     "od": 26.9,
+     "wall": {
+      "Standard": 2.3
+     }
+    },
+    "DN25": {
+     "od": 33.7,
+     "wall": {
+      "Standard": 2.6
+     }
+    },
+    "DN32": {
+     "od": 42.4,
+     "wall": {
+      "Standard": 2.6
+     }
+    },
+    "DN40": {
+     "od": 48.3,
+     "wall": {
+      "Standard": 2.6
+     }
+    },
+    "DN50": {
+     "od": 60.3,
+     "wall": {
+      "Standard": 2.9
+     }
+    },
+    "DN65": {
+     "od": 76.1,
+     "wall": {
+      "Standard": 2.9
+     }
+    },
+    "DN80": {
+     "od": 88.9,
+     "wall": {
+      "Standard": 3.2
+     }
+    },
+    "DN100": {
+     "od": 114.3,
+     "wall": {
+      "Standard": 3.6
+     }
+    },
+    "DN125": {
+     "od": 139.7,
+     "wall": {
+      "Standard": 4.0
+     }
+    },
+    "DN150": {
+     "od": 168.3,
+     "wall": {
+      "Standard": 4.5
+     }
+    },
+    "DN200": {
+     "od": 219.1,
+     "wall": {
+      "Standard": 6.3
+     }
+    },
+    "DN250": {
+     "od": 273.0,
+     "wall": {
+      "Standard": 6.3
+     }
+    },
+    "DN300": {
+     "od": 323.9,
+     "wall": {
+      "Standard": 7.1
+     }
+    },
+    "DN350": {
+     "od": 355.6,
+     "wall": {
+      "Standard": 8.0
+     }
+    },
+    "DN400": {
+     "od": 406.4,
+     "wall": {
+      "Standard": 8.8
+     }
+    },
+    "DN450": {
+     "od": 457.0,
+     "wall": {
+      "Standard": 10.0
+     }
+    },
+    "DN500": {
+     "od": 508.0,
+     "wall": {
+      "Standard": 11.0
+     }
+    },
+    "DN600": {
+     "od": 610.0,
+     "wall": {
+      "Standard": 12.5
+     }
+    }
+   }
+  }
+ },
+ "sizes": {
+  "DN15": {
+   "nps": "1/2",
+   "fitting": {
+    "elbow90LR": 38,
+    "elbow90SR": 16,
+    "elbow45LR": 16,
+    "teeC": 25,
+    "reducerH": 38,
+    "capE": 25
+   },
+   "flange": {
+    "od": 89,
+    "thickness": 11,
+    "wnLength": 48,
+    "hubDia": 30,
+    "rfDia": 35,
+    "rfHeight": 2.0,
+    "boltPCD": 60.3,
+    "boltCount": 4,
+    "boltHole": 15.9
+   }
+  },
+  "DN20": {
+   "nps": "3/4",
+   "fitting": {
+    "elbow90LR": 38,
+    "elbow90SR": 19,
+    "elbow45LR": 19,
+    "teeC": 29,
+    "reducerH": 38,
+    "capE": 25
+   },
+   "flange": {
+    "od": 98,
+    "thickness": 13,
+    "wnLength": 52,
+    "hubDia": 38,
+    "rfDia": 43,
+    "rfHeight": 2.0,
+    "boltPCD": 69.8,
+    "boltCount": 4,
+    "boltHole": 15.9
+   }
+  },
+  "DN25": {
+   "nps": "1",
+   "fitting": {
+    "elbow90LR": 38,
+    "elbow90SR": 25,
+    "elbow45LR": 22,
+    "teeC": 38,
+    "reducerH": 51,
+    "capE": 38
+   },
+   "flange": {
+    "od": 108,
+    "thickness": 14,
+    "wnLength": 56,
+    "hubDia": 49,
+    "rfDia": 51,
+    "rfHeight": 2.0,
+    "boltPCD": 79.4,
+    "boltCount": 4,
+    "boltHole": 15.9
+   }
+  },
+  "DN32": {
+   "nps": "1-1/4",
+   "fitting": {
+    "elbow90LR": 48,
+    "elbow90SR": 32,
+    "elbow45LR": 25,
+    "teeC": 48,
+    "reducerH": 51,
+    "capE": 38
+   },
+   "flange": {
+    "od": 117,
+    "thickness": 16,
+    "wnLength": 57,
+    "hubDia": 59,
+    "rfDia": 64,
+    "rfHeight": 2.0,
+    "boltPCD": 88.9,
+    "boltCount": 4,
+    "boltHole": 15.9
+   }
+  },
+  "DN40": {
+   "nps": "1-1/2",
+   "fitting": {
+    "elbow90LR": 57,
+    "elbow90SR": 38,
+    "elbow45LR": 29,
+    "teeC": 57,
+    "reducerH": 64,
+    "capE": 38
+   },
+   "flange": {
+    "od": 127,
+    "thickness": 18,
+    "wnLength": 62,
+    "hubDia": 65,
+    "rfDia": 73,
+    "rfHeight": 2.0,
+    "boltPCD": 98.4,
+    "boltCount": 4,
+    "boltHole": 15.9
+   }
+  },
+  "DN50": {
+   "nps": "2",
+   "fitting": {
+    "elbow90LR": 76,
+    "elbow90SR": 51,
+    "elbow45LR": 35,
+    "teeC": 64,
+    "reducerH": 76,
+    "capE": 38
+   },
+   "flange": {
+    "od": 152,
+    "thickness": 19,
+    "wnLength": 64,
+    "hubDia": 78,
+    "rfDia": 92,
+    "rfHeight": 2.0,
+    "boltPCD": 120.7,
+    "boltCount": 4,
+    "boltHole": 19.0
+   }
+  },
+  "DN65": {
+   "nps": "2-1/2",
+   "fitting": {
+    "elbow90LR": 95,
+    "elbow90SR": 64,
+    "elbow45LR": 44,
+    "teeC": 76,
+    "reducerH": 89,
+    "capE": 38
+   },
+   "flange": {
+    "od": 178,
+    "thickness": 22,
+    "wnLength": 70,
+    "hubDia": 90,
+    "rfDia": 105,
+    "rfHeight": 2.0,
+    "boltPCD": 139.7,
+    "boltCount": 4,
+    "boltHole": 19.0
+   }
+  },
+  "DN80": {
+   "nps": "3",
+   "fitting": {
+    "elbow90LR": 114,
+    "elbow90SR": 76,
+    "elbow45LR": 51,
+    "teeC": 86,
+    "reducerH": 89,
+    "capE": 51
+   },
+   "flange": {
+    "od": 191,
+    "thickness": 24,
+    "wnLength": 70,
+    "hubDia": 108,
+    "rfDia": 127,
+    "rfHeight": 2.0,
+    "boltPCD": 152.4,
+    "boltCount": 4,
+    "boltHole": 19.0
+   }
+  },
+  "DN100": {
+   "nps": "4",
+   "fitting": {
+    "elbow90LR": 152,
+    "elbow90SR": 102,
+    "elbow45LR": 64,
+    "teeC": 105,
+    "reducerH": 102,
+    "capE": 64
+   },
+   "flange": {
+    "od": 229,
+    "thickness": 24,
+    "wnLength": 76,
+    "hubDia": 135,
+    "rfDia": 157,
+    "rfHeight": 2.0,
+    "boltPCD": 190.5,
+    "boltCount": 8,
+    "boltHole": 19.0
+   }
+  },
+  "DN125": {
+   "nps": "5",
+   "fitting": {
+    "elbow90LR": 190,
+    "elbow90SR": 127,
+    "elbow45LR": 79,
+    "teeC": 124,
+    "reducerH": 127,
+    "capE": 76
+   },
+   "flange": {
+    "od": 254,
+    "thickness": 24,
+    "wnLength": 89,
+    "hubDia": 164,
+    "rfDia": 186,
+    "rfHeight": 2.0,
+    "boltPCD": 215.9,
+    "boltCount": 8,
+    "boltHole": 22.2
+   }
+  },
+  "DN150": {
+   "nps": "6",
+   "fitting": {
+    "elbow90LR": 229,
+    "elbow90SR": 152,
+    "elbow45LR": 95,
+    "teeC": 143,
+    "reducerH": 140,
+    "capE": 89
+   },
+   "flange": {
+    "od": 279,
+    "thickness": 25,
+    "wnLength": 89,
+    "hubDia": 192,
+    "rfDia": 216,
+    "rfHeight": 2.0,
+    "boltPCD": 241.3,
+    "boltCount": 8,
+    "boltHole": 22.2
+   }
+  },
+  "DN200": {
+   "nps": "8",
+   "fitting": {
+    "elbow90LR": 305,
+    "elbow90SR": 203,
+    "elbow45LR": 127,
+    "teeC": 178,
+    "reducerH": 152,
+    "capE": 102
+   },
+   "flange": {
+    "od": 343,
+    "thickness": 29,
+    "wnLength": 102,
+    "hubDia": 246,
+    "rfDia": 270,
+    "rfHeight": 2.0,
+    "boltPCD": 298.5,
+    "boltCount": 8,
+    "boltHole": 22.2
+   }
+  },
+  "DN250": {
+   "nps": "10",
+   "fitting": {
+    "elbow90LR": 381,
+    "elbow90SR": 254,
+    "elbow45LR": 159,
+    "teeC": 216,
+    "reducerH": 178,
+    "capE": 127
+   },
+   "flange": {
+    "od": 406,
+    "thickness": 30,
+    "wnLength": 102,
+    "hubDia": 305,
+    "rfDia": 324,
+    "rfHeight": 2.0,
+    "boltPCD": 362.0,
+    "boltCount": 12,
+    "boltHole": 25.4
+   }
+  },
+  "DN300": {
+   "nps": "12",
+   "fitting": {
+    "elbow90LR": 457,
+    "elbow90SR": 305,
+    "elbow45LR": 190,
+    "teeC": 254,
+    "reducerH": 203,
+    "capE": 152
+   },
+   "flange": {
+    "od": 483,
+    "thickness": 32,
+    "wnLength": 114,
+    "hubDia": 365,
+    "rfDia": 381,
+    "rfHeight": 2.0,
+    "boltPCD": 431.8,
+    "boltCount": 12,
+    "boltHole": 25.4
+   }
+  },
+  "DN350": {
+   "nps": "14",
+   "fitting": {
+    "elbow90LR": 533,
+    "elbow90SR": 356,
+    "elbow45LR": 222,
+    "teeC": 279,
+    "reducerH": 330,
+    "capE": 165
+   },
+   "flange": {
+    "od": 533,
+    "thickness": 35,
+    "wnLength": 127,
+    "hubDia": 400,
+    "rfDia": 413,
+    "rfHeight": 2.0,
+    "boltPCD": 476.3,
+    "boltCount": 12,
+    "boltHole": 28.6
+   }
+  },
+  "DN400": {
+   "nps": "16",
+   "fitting": {
+    "elbow90LR": 610,
+    "elbow90SR": 406,
+    "elbow45LR": 254,
+    "teeC": 305,
+    "reducerH": 356,
+    "capE": 178
+   },
+   "flange": {
+    "od": 597,
+    "thickness": 37,
+    "wnLength": 127,
+    "hubDia": 457,
+    "rfDia": 470,
+    "rfHeight": 2.0,
+    "boltPCD": 539.8,
+    "boltCount": 16,
+    "boltHole": 28.6
+   }
+  },
+  "DN450": {
+   "nps": "18",
+   "fitting": {
+    "elbow90LR": 686,
+    "elbow90SR": 457,
+    "elbow45LR": 286,
+    "teeC": 343,
+    "reducerH": 381,
+    "capE": 203
+   },
+   "flange": {
+    "od": 635,
+    "thickness": 40,
+    "wnLength": 140,
+    "hubDia": 505,
+    "rfDia": 533,
+    "rfHeight": 2.0,
+    "boltPCD": 577.9,
+    "boltCount": 16,
+    "boltHole": 31.8
+   }
+  },
+  "DN500": {
+   "nps": "20",
+   "fitting": {
+    "elbow90LR": 762,
+    "elbow90SR": 508,
+    "elbow45LR": 318,
+    "teeC": 381,
+    "reducerH": 508,
+    "capE": 229
+   },
+   "flange": {
+    "od": 699,
+    "thickness": 43,
+    "wnLength": 145,
+    "hubDia": 559,
+    "rfDia": 584,
+    "rfHeight": 2.0,
+    "boltPCD": 635.0,
+    "boltCount": 20,
+    "boltHole": 31.8
+   }
+  },
+  "DN600": {
+   "nps": "24",
+   "fitting": {
+    "elbow90LR": 914,
+    "elbow90SR": 610,
+    "elbow45LR": 381,
+    "teeC": 432,
+    "reducerH": 508,
+    "capE": 267
+   },
+   "flange": {
+    "od": 813,
+    "thickness": 48,
+    "wnLength": 152,
+    "hubDia": 663,
+    "rfDia": 692,
+    "rfHeight": 2.0,
+    "boltPCD": 749.3,
+    "boltCount": 20,
+    "boltHole": 34.9
+   }
+  }
+ }
+}

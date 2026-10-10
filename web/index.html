@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pipe Spool Tool</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22%3E%3Cpath d=%22M1 6h8a2 2 0 0 1 2 2v7h4V8a6 6 0 0 0-6-6H1z%22 fill=%22%23e8792b%22/%3E%3C/svg%3E">
+  <script type="importmap">
+    { "imports": { "three": "./vendor/three.module.min.js", "three/addons/": "./vendor/" } }
+  </script>
+</head>
+<body>
+<header>
+  <div class="brand">Pipe Spool Tool</div>
+  <nav class="tabs">
+    <button data-tab="builder" class="active">Spool builder</button>
+    <button data-tab="library">Library setup</button>
+  </nav>
+  <div class="project">
+    <input id="projectName" value="Spool-01" title="Spool name (used for the STEP file)">
+    <button id="btnNew" title="New spool">New</button>
+    <button id="btnOpen" title="Open a saved spool">Open…</button>
+    <button id="btnSave" title="Save spool (Ctrl+S)">Save</button>
+    <button id="btnBom" title="Bill of materials / cut list">BOM</button>
+    <button id="btnExport" class="primary" title="Export the combined STEP file">Export STEP</button>
+  </div>
+</header>
+
+<main>
+  <!-- ======================================================== BUILDER -->
+  <section id="tab-builder" class="tab active">
+    <aside class="left">
+      <div class="panel">
+        <h3>Pipe spec</h3>
+        <label>Standard <select id="selStandard"></select></label>
+        <label>Schedule <select id="selSchedule"></select></label>
+        <label>Start size <select id="selSize"></select></label>
+      </div>
+      <div class="panel">
+        <h3>Fittings <span class="hint">click to add at the orange port</span></h3>
+        <div id="palette" class="palette"></div>
+      </div>
+      <div class="panel grow">
+        <h3>Library parts</h3>
+        <input id="partSearch" placeholder="Search parts…">
+        <div id="partList" class="list"></div>
+      </div>
+    </aside>
+
+    <div class="viewport-wrap">
+      <div class="view-toolbar">
+        <button data-view="iso" title="Isometric (SE)">Iso</button>
+        <button data-view="iso2" title="Isometric (SW)">Iso 2</button>
+        <button data-view="iso3" title="Isometric (NW)">Iso 3</button>
+        <button data-view="iso4" title="Isometric (NE)">Iso 4</button>
+        <button data-view="top">Top</button>
+        <button data-view="front">Front</button>
+        <button data-view="right">Right</button>
+        <button id="btnFit" title="Zoom to fit (Home)">Fit</button>
+        <span class="sep"></span>
+        <label><input type="checkbox" id="chkDims" checked> Dimensions</label>
+        <label><input type="checkbox" id="chkTags" checked> Tags</label>
+        <label><input type="checkbox" id="chkXray"> X-ray</label>
+        <span class="sep"></span>
+        <button id="btnUndo" title="Undo (Ctrl+Z)">↶</button>
+        <button id="btnRedo" title="Redo (Ctrl+Y)">↷</button>
+      </div>
+      <div id="viewport" class="viewport"></div>
+      <div id="status" class="status"></div>
+    </div>
+
+    <aside class="right">
+      <div class="panel" id="props"></div>
+      <div class="panel grow">
+        <h3>Components</h3>
+        <div id="tree" class="list tree"></div>
+      </div>
+      <details class="panel help">
+        <summary>Keyboard shortcuts</summary>
+        <table>
+          <tr><td>P</td><td>Pipe</td></tr>
+          <tr><td>E / Shift+E</td><td>Elbow 90° / 45°</td></tr>
+          <tr><td>T</td><td>Tee</td></tr>
+          <tr><td>F</td><td>Weld neck flange</td></tr>
+          <tr><td>R / Shift+R</td><td>Roll selected +90° / −90°</td></tr>
+          <tr><td>X</td><td>Flip (attach by the other port)</td></tr>
+          <tr><td>N</td><td>Next open port</td></tr>
+          <tr><td>Del</td><td>Delete selected (and downstream)</td></tr>
+          <tr><td>Ctrl+Z / Ctrl+Y</td><td>Undo / redo</td></tr>
+          <tr><td>Home</td><td>Zoom to fit</td></tr>
+          <tr><td>Mouse</td><td>Left: orbit · Right/middle: pan · Wheel: zoom</td></tr>
+        </table>
+      </details>
+    </aside>
+  </section>
+
+  <!-- ======================================================== LIBRARY -->
+  <section id="tab-library" class="tab">
+    <aside class="left">
+      <div class="panel">
+        <h3>STEP library</h3>
+        <div class="hint" id="libPath"></div>
+        <label class="file-btn">Add STEP files…<input type="file" id="libUpload" accept=".stp,.step" multiple></label>
+        <button id="libRefresh">Refresh</button>
+      </div>
+      <div class="panel grow">
+        <input id="libSearch" placeholder="Search…">
+        <div id="libList" class="list"></div>
+      </div>
+    </aside>
+    <div class="viewport-wrap">
+      <div class="view-toolbar">
+        <button data-lview="iso">Iso</button>
+        <button data-lview="top">Top</button>
+        <button data-lview="front">Front</button>
+        <button data-lview="right">Right</button>
+        <button id="libFit">Fit</button>
+        <span class="sep"></span>
+        <label><input type="checkbox" id="libShowAll"> Show all circle candidates</label>
+      </div>
+      <div id="libViewport" class="viewport"></div>
+      <div id="libStatus" class="status">Select a STEP file to set up its connection ports.</div>
+    </div>
+    <aside class="right wide">
+      <div class="panel grow" id="libEditor"><p class="hint">No part selected.</p></div>
+    </aside>
+  </section>
+</main>
+
+<dialog id="dlgOpen">
+  <h3>Open spool</h3>
+  <div id="projectList" class="list"></div>
+  <div class="row">
+    <label class="file-btn">Import .json…<input type="file" id="importJson" accept=".json"></label>
+    <span class="grow"></span>
+    <button data-close>Cancel</button>
+  </div>
+</dialog>
+
+<dialog id="dlgBom">
+  <h3>Bill of materials</h3>
+  <div id="bomBody"></div>
+  <div class="row">
+    <button id="bomCsv">Download CSV</button>
+    <button id="bomJson">Download spool .json</button>
+    <span class="grow"></span>
+    <button data-close>Close</button>
+  </div>
+</dialog>
+
+<dialog id="dlgExport">
+  <h3>Export STEP</h3>
+  <label><input type="checkbox" id="expFuse" checked> Fuse into a single solid body (recommended for Revit families)</label>
+  <label><input type="checkbox" id="expHollow" checked> Hollow pipes &amp; fittings (show bore)</label>
+  <p class="hint">Fusing complex manufacturer models can take a while. If it fails the parts are exported as one multi-body file instead.</p>
+  <div class="row">
+    <span class="grow"></span>
+    <button data-close>Cancel</button>
+    <button id="expGo" class="primary">Export</button>
+  </div>
+  <div id="expMsg" class="hint"></div>
+</dialog>
+
+<div id="toast"></div>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
