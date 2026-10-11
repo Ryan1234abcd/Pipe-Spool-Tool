@@ -9,19 +9,21 @@ export function createPartLoader(library) {
   return {
     get(id) {
       const key = library.cacheKey(id);
-      if (!cache.has(key)) {
+      const turn = library.parts.get(id)?.turn || null;
+      const mkey = turn ? `${key}|turn${turn.join('.')}` : key; // valves: handle drawn separately
+      if (!cache.has(mkey)) {
         const p = (async () => {
-          let d = await meshGet(key);
+          let d = await meshGet(mkey);
           if (!d) {
-            d = await cad.load(key, await library.bytes(id));
-            meshSet(key, d);
+            d = await cad.load(key, await library.bytes(id), turn);
+            meshSet(mkey, d);
           }
-          return { ...d, geometry: geometryFromMesh(d.mesh) };
+          return { ...d, geometry: geometryFromMesh(d.mesh), turnGeometry: d.turnMesh ? geometryFromMesh(d.turnMesh) : null };
         })();
-        p.catch(() => cache.delete(key));
-        cache.set(key, p);
+        p.catch(() => cache.delete(mkey));
+        cache.set(mkey, p);
       }
-      return cache.get(key);
+      return cache.get(mkey);
     },
     /** Make sure the exact B-rep shape is loaded in the CAD kernel (for export). */
     async ensureKernel(id) {

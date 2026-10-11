@@ -23,14 +23,15 @@ try it before opening the library.
 
 ## Build a spool
 
-1. **Pick the pipe type and first part.** Choose the pipe type (e.g. Sch 10S pipe or dairy tube) –
-   the start size list then only has that type's sizes – and click a part.
+1. **Pick the pipe type, start and first part.** Choose the pipe type (e.g. Sch 10S pipe or dairy
+   tube) – the start size list then only has that type's sizes – and whether the spool starts
+   horizontal or vertical (**Start**; it can be changed later on the first part), then click a part.
 2. **Carry on from the orange end.** The list only shows parts that fit that end: the same pipe size
    and a connection that mates with it. Weld ends and BSP female ends are joined with a pipe (marked
    **+ pipe**); BSP male into female, RJT, and flange to flange or wafer valve go straight together
    (flanges match by their drilling). Click any blue marker to carry on from another open end.
-   The chips above the list (Elbows & bends, Tees, Valves…) show or hide groups; Shift+click a chip
-   to show only that group.
+   The chips above the list pick one part type at a time (Elbows & bends, Tees, Valves…, or All).
+   Flanged joints match by size only (DN), whatever the flange standard.
 3. **Rotate and connect.** Select a part and roll it with **⟳ 90°** / **⟲ 90°** (`R` / `Shift+R`) or
    type an angle. **Connected by** picks which end it is joined by (a tee's run end or its branch);
    **Next part on** picks which free end the next part goes on.
@@ -41,6 +42,13 @@ try it before opening the library.
 5. **Parallel lines.** Select a pipe and click **Parallel line…**: a new line starts beside it at the
    **centre distance** you type. Turn it round the pipe (⟳ 90°), slide it along, or run it the other
    way, then add parts or a pipe (`P`) on its orange end. Change the distance any time.
+
+6. **Branches.** Select a pipe and click **Branch…**, then pick a weld nipple (normal or extended),
+   a tube weld nipple or a half socket: it is stabbed into the pipe (set in, flush with the bore).
+   Set **Along pipe** (from the upstream fitting centre) and **Round pipe** (angle), then carry on
+   from the nipple's thread.
+7. **Valve handles.** Ball valves and lever butterfly valves have **Handle: Open / Closed**; closed
+   turns the lever (and the ball) a quarter turn about the stem, in the view and the export.
 
 **RJT unions** are one part: an RJT female half and an RJT male half of the same size come screwed
 together (e.g. *RJT Union BSP male × BSP male*), and only their outer ends connect. The BOM lists
@@ -70,7 +78,7 @@ Everything is built in your browser and merged into one solid per line. Choose t
 | Level | What you get | Typical size |
 |---|---|---|
 | **Envelope** | each part replaced by a smooth outline (spun round its pipe line, rings for bends) and a block for each handle or bonnet | smallest |
-| **Shrink-wrap** | the part's real outside: hidden inner parts (balls, seats, springs) left out, bores and threads filled, holes and loose bits smaller than the **resolution** removed | small |
+| **Shrink-wrap** | the part's real outside: hidden inner parts (balls, seats, springs) left out, bores and threads filled, bolt holes and other holes and loose bits smaller than the **resolution** removed | small |
 | **Full model** | the original manufacturer geometry | largest |
 
 **Build preview** shows the result, its face count and file size before you download it. Pipes are

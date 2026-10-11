@@ -4,7 +4,7 @@
 // Where the browser supports it (Chrome / Edge: File System Access API) the
 // folder is remembered between visits. Otherwise it is read through a normal
 // folder picker each time. STEP files are only read when a part is used.
-import { endFamily } from './joints.js';
+import { endFamily, nominalSize } from './joints.js';
 import { attachTransform, transformPort, applyPoint, IDENTITY } from './kinematics.js';
 
 /** Part groups for the filter in the part list (Part-Library `category`). */
@@ -92,10 +92,11 @@ export class Library {
         family: endFamily(e.end),
         flange: e.flange_od_mm || null,
         pcd: e.pcd_mm || null,
+        dn: nominalSize(e),
         engage: g.ends[i].engage || 0,
         thread: e.thread || null,
       }));
-      this.parts.set(id, { ...p, id, ports, centre: g.c, bbox: g.bbox, name: partName(p) });
+      this.parts.set(id, { ...p, id, ports, centre: g.c, bbox: g.bbox, name: partName(p), stem: g.stem || null, turn: g.turn || null });
     }
     this._kits();
   }

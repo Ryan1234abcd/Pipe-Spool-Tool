@@ -17,13 +17,18 @@ const COLORS = { pipe: 0x9aabbd, part: 0xd38a3a, fitting: 0x8195ab };
 const SPOOLS_KEY = 'pipe-spool-tool.spools.v2';
 const DEFAULT_CUT = 150;
 const SHARED_SYSTEMS = ['valves', 'adapters', 'rjt-unions']; // offered with every pipe type
-let hiddenGroups = new Set();
-try { hiddenGroups = new Set(JSON.parse(localStorage.getItem('pipe-spool-tool.hiddenGroups')) || []); } catch { /* none */ }
+let partGroup = 'All'; // the one part type shown in the list
+try { partGroup = localStorage.getItem('pipe-spool-tool.partGroup') || 'All'; } catch { /* default */ }
+// parts that can be stabbed into the side of a pipe to start a branch
+const STAB_TYPES = ['weld-nipple-pipe', 'weld-nipple-pipe-ext', 'weld-nipple-tube', 'half-socket'];
+const DIR_TEXT = { '+X': 'Horizontal (along X)', '+Y': 'Horizontal (along Y)', '+Z': 'Vertical, going up', '-Z': 'Vertical, going down' };
 
 // ---------------------------------------------------------------------- state
 const state = {
   name: 'Spool-01',
   pipeType: 'pipe-sch10s', // Part-Library system the spool starts in
+  startDir: '+X', // which way the first part runs
+  branchOn: null, // pipe id while picking a part to stab into it
   startSize: null,
   nodes: [],
   selected: null,
@@ -79,9 +84,24 @@ function localPorts(n) {
     return [{ ...base, name: 'in', dir: [-1, 0, 0], family: 'none' }, { ...base, name: 'out', dir: [1, 0, 0], family: 'start', wall: n.wall, threaded: n.threaded }];
   }
   if (n.type === 'pipe') {
-    return pipePorts(n.od, Math.max(n.cut || 0, 0)).map((p) => ({ ...p, family: 'pipe', label: n.label, threaded: !!n.threaded }));
+    const ports = pipePorts(n.od, Math.max(n.cut || 0, 0)).map((p) => ({ ...p, family: 'pipe', label: n.label, threaded: !!n.threaded }));
+    for (const c of childrenOf(n.id)) if (c.branch) ports.push(branchPort(n, c));
+    return ports;
   }
   return partOf(n)?.ports || null;
+}
+
+/**
+ * Where a stabbed-in branch sits on its pipe: `along` from the upstream
+ * fitting centre, `angle` round the pipe from its up side; the nipple end is
+ * set in flush with the bore.
+ */
+function branchPort(pipe, c) {
+  const { a } = pipeSides(pipe);
+  const x = (Number(c.branch.along) || 0) - (a ? a.c2e - (a.engage || 0) : 0);
+  const v = rotate([0, 0, 1], [1, 0, 0], ((Number(c.branch.angle) || 0) * Math.PI) / 180);
+  const r = pipe.od / 2 - (pipe.wall || 0);
+  return { name: `br:${c.id}`, origin: [x, v[1] * r, v[2] * r], dir: v, up: [1, 0, 0], od: pipe.od, label: pipe.label, family: 'branch' };
 }
 
 /** Centre-to-end data of the part on the far side of a pipe end. */
@@ -154,7 +174,7 @@ async function rebuild() {
   const missing = [...new Set(state.nodes.filter((n) => n.type === 'part').flatMap((n) => membersOf(partOf(n)).map((m) => m.part)))].filter((id) => !meshes.has(id));
   if (!missing.length) return;
   await Promise.all(missing.map(async (id) => {
-    try { meshes.set(id, (await parts.get(id)).geometry); } catch (e) { toast(`${library.parts.get(id)?.name || id}: ${e.message}`, true); }
+    try { const d = await parts.get(id); meshes.set(id, { geometry: d.geometry, turnGeometry: d.turnGeometry }); } catch (e) { toast(`${library.parts.get(id)?.name || id}: ${e.message}`, true); }
   }));
   if (seq === buildSeq) draw();
 }
@@ -214,13 +234,29 @@ function draw() {
       }
     } else if (n.type === 'part') {
       // a kit (RJT union) is drawn as its halves
-      for (const m of membersOf(partOf(n))) {
-        if (!meshes.has(m.part)) continue;
-        const mm = new THREE.Mesh(meshes.get(m.part), material(isFitting(partOf(n)) ? 'fitting' : 'part', sel));
-        mm.matrixAutoUpdate = false;
-        mm.matrix.copy(toMatrix4(mul(e.matrix, m.matrix)));
-        mm.userData.nodeId = n.id;
-        viewer.content.add(mm);
+      const p = partOf(n);
+      for (const m of membersOf(p)) {
+        const g = meshes.get(m.part);
+        if (!g) continue;
+        const mat = material(isFitting(p) ? 'fitting' : 'part', sel);
+        const parts = [[g.geometry, mul(e.matrix, m.matrix)]];
+        // a valve's handle is drawn separately, turned when it is closed
+        if (g.turnGeometry) parts.push([g.turnGeometry, mul(mul(e.matrix, m.matrix), n.handle === 'closed' ? stemTurn(p, 90) : IDENTITY4)]);
+        for (const [geo, M] of parts) {
+          const mm = new THREE.Mesh(geo, mat);
+          mm.matrixAutoUpdate = false;
+          mm.matrix.copy(toMatrix4(M));
+          mm.userData.nodeId = n.id;
+          viewer.content.add(mm);
+        }
+      }
+      if (n.branch && showDims) {
+        const pt = e.ports.find((q) => q.name === n.port)?.origin;
+        if (pt) {
+          const el = addLabel('dim-label', `↦ ${round(Number(n.branch.along) || 0)} · ${round(Number(n.branch.angle) || 0)}°`, pt);
+          el.dataset.node = n.id;
+          el.title = 'Branch position: from the upstream centre, and round the pipe – click to edit';
+        }
       }
     } else if (n.type === 'start' && n.target) {
       drawStart(n);
@@ -241,6 +277,19 @@ function draw() {
   const shown = viewer.content.children.some((c) => c.isMesh && c.userData.nodeId);
   if (shown && (needFit || offScreen())) { viewer.fit(); needFit = false; }
   viewer.render();
+}
+
+const IDENTITY4 = [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]];
+
+/** Rotation of a valve's handle about its stem axis (part coordinates). */
+function stemTurn(p, deg) {
+  if (!p?.stem) return IDENTITY4;
+  const { o, d } = p.stem;
+  const a = (deg * Math.PI) / 180;
+  const cols = [[1, 0, 0], [0, 1, 0], [0, 0, 1]].map((v) => rotate(v, d, a));
+  const R = [0, 1, 2].map((i) => [cols[0][i], cols[1][i], cols[2][i]]);
+  const t = [0, 1, 2].map((i) => o[i] - (R[i][0] * o[0] + R[i][1] * o[1] + R[i][2] * o[2]));
+  return [[...R[0], t[0]], [...R[1], t[1]], [...R[2], t[2]], [0, 0, 0, 1]];
 }
 
 /** The STEP parts a library part is made of (itself, or a kit's halves). */
@@ -367,6 +416,11 @@ function activeTarget() {
 
 /** Ends a part could join at the active end (or the start size when empty). */
 function optionsFor(part) {
+  if (state.branchOn) { // stab-in: the nipple's weld end, smaller than the pipe
+    const pipe = nodeById(state.branchOn);
+    if (!pipe || !STAB_TYPES.includes(part.type)) return [];
+    return part.ports.filter((q) => q.family === 'weld' && q.od < pipe.od * 0.9).map((port) => ({ port, viaPipe: false }));
+  }
   if (!state.nodes.length) {
     const ok = part.ports.filter((p) => p.label === state.startSize);
     return ok.map((port) => ({ port, viaPipe: false }));
@@ -386,10 +440,11 @@ function addPart(id) {
   const opts = optionsFor(part);
   if (!opts.length) { toast(`${part.name} doesn't fit the ${state.nodes.length ? 'selected end' : 'start size'}.`, true); return; }
   const opt = opts[0];
+  if (state.branchOn) { addBranch(state.branchOn, part, opt.port); return; }
   const t = state.nodes.length ? activeTarget() : null;
   commit(() => {
     const n = { id: newId(), type: 'part', part: id, port: opt.port.name, roll: 0 };
-    if (!t) { n.startDir = '+X'; state.nodes.push(n); needFit = true; } else {
+    if (!t) { n.startDir = state.startDir; state.nodes.push(n); needFit = true; } else {
       let parent = t.nodeId, parentPort = t.port.name;
       if (opt.viaPipe) {
         const spec = pipeFor(t.port);
@@ -407,6 +462,22 @@ function addPart(id) {
     state.active = next ? `${n.id}:${next}` : null;
     state.selected = n.id;
     lastAdded = n.id;
+  });
+}
+
+/** Stab a weld nipple into a pipe, half way along it, to start a branch. */
+function addBranch(pipeId, part, port) {
+  const pipe = nodeById(pipeId);
+  const { a, b } = pipeSides(pipe);
+  const span = Math.max(pipe.cut, 0) + (a ? a.c2e - (a.engage || 0) : 0) + (b ? b.c2e - (b.engage || 0) : 0);
+  state.branchOn = null;
+  commit(() => {
+    const n = { id: newId(), type: 'part', part: part.id, port: port.name, roll: 0, parent: pipeId, branch: { along: Math.round((span / 2) / 5) * 5, angle: 0 } };
+    n.parentPort = `br:${n.id}`;
+    state.nodes.push(n);
+    const next = runPort(part.ports, n.port);
+    state.active = next ? `${n.id}:${next}` : null;
+    state.selected = n.id;
   });
 }
 
@@ -458,7 +529,7 @@ function deleteNode(id) {
   if (!n) return;
   commit(() => {
     const up = nodeById(n.parent);
-    if (n.type === 'part' && up?.type === 'pipe' && childrenOf(up.id).length === 1) n = up; // its pipe goes too
+    if (n.type === 'part' && up?.type === 'pipe' && n.parentPort === 'B' && childrenOf(up.id).length === 1) n = up; // its pipe goes too
     removeSubtree(n.id);
     state.active = n.parent ? `${n.parent}:${n.parentPort}` : null;
     state.selected = null;
@@ -554,22 +625,28 @@ function renderPartList() {
   const empty = !state.nodes.length;
   $('startSizeRow').hidden = !empty;
   $('pipeTypeRow').hidden = !empty;
-  const t = empty ? null : activeTarget();
-  $('nextEnd').innerHTML = empty
+  $('startDirRow').hidden = !empty;
+  if (state.branchOn && !nodeById(state.branchOn)) state.branchOn = null;
+  const t = empty || state.branchOn ? null : activeTarget();
+  $('nextEnd').innerHTML = state.branchOn
+    ? `Branch on: <b>${esc(nodeLabel(nodeById(state.branchOn)))}</b> – pick a weld nipple <button id="brCancel" class="link">Cancel</button>`
+    : empty
     ? '<span class="hint">Pick the first part. The orange end shows where the next one goes.</span>'
     : t ? `Next on: <b>${esc(t.port.label || `Ø${t.port.od}`)}</b> ${esc(FAMILY_TEXT[t.port.family] || '')}`
       : '<span class="hint">No open end selected – click a blue marker in the view.</span>';
   const q = $('partSearch').value.toLowerCase().trim();
   const words = q.split(/\s+/).filter(Boolean);
-  const fits = (empty || t) ? library.list().filter((p) => optionsFor(p).length
+  const fits = (empty || t || state.branchOn) ? library.list().filter((p) => optionsFor(p).length
     && (!empty || inPipeType(p) || SHARED_SYSTEMS.includes(p.system))
     && words.every((w) => `${p.search || ''} ${p.name} ${p.id}`.toLowerCase().includes(w))) : [];
   // filter chips: one per part group that has something fitting here
   const counts = new Map();
   for (const p of fits) counts.set(groupOf(p), (counts.get(groupOf(p)) || 0) + 1);
-  $('groupChips').innerHTML = GROUPS.map(([g]) => g).filter((g) => counts.has(g))
-    .map((g) => `<button class="chip ${hiddenGroups.has(g) ? '' : 'on'}" data-group="${esc(g)}" aria-pressed="${!hiddenGroups.has(g)}" title="Show or hide ${esc(g.toLowerCase())}">${esc(g)} <span>${counts.get(g)}</span></button>`).join('');
-  const list = fits.filter((p) => !hiddenGroups.has(groupOf(p)));
+  // one part type at a time (or All)
+  const shown = partGroup === 'All' || !counts.has(partGroup) ? 'All' : partGroup;
+  const chip = (g, n) => `<button class="chip ${g === partGroup ? 'on' : ''}" data-group="${esc(g)}" role="radio" aria-checked="${g === partGroup}">${esc(g)} <span>${n}</span></button>`;
+  $('groupChips').innerHTML = chip('All', fits.length) + GROUPS.map(([g]) => g).filter((g) => counts.has(g)).map((g) => chip(g, counts.get(g))).join('');
+  const list = shown === 'All' ? fits : fits.filter((p) => groupOf(p) === shown);
   const groups = new Map(GROUPS.map(([g]) => [g, []]));
   for (const p of list) {
     const g = groupOf(p);
@@ -585,7 +662,9 @@ function renderPartList() {
       html += `<div class="item" data-part="${esc(p.id)}" title="${esc(`${p.id} – ${p.description}`)}">${esc(p.type_name || p.type)}${twin ? ` <span class="hint">${esc(p.kit ? '' : p.id)}</span>` : ''}<span class="meta">${via} ${esc(p.size_label || '')}</span></div>`;
     }
   }
-  $('partList').innerHTML = html || `<p class="hint">${!library.parts.size ? 'Open your Part-Library folder to see parts.' : fits.length ? 'All the parts that fit here are hidden – turn a group on above.' : 'Nothing in the library fits here.'}</p>`;
+  const note = partGroup !== 'All' && shown === 'All' && fits.length ? `<p class="hint">No ${esc(partGroup.toLowerCase())} fit here – showing everything that does.</p>` : '';
+  $('partList').innerHTML = note + (html || `<p class="hint">${!library.parts.size ? 'Open your Part-Library folder to see parts.' : 'Nothing in the library fits here.'}</p>`);
+  if ($('brCancel')) $('brCancel').onclick = () => { state.branchOn = null; renderPartList(); };
 }
 
 function renderTree() {
@@ -634,6 +713,7 @@ function renderProps() {
       <div class="btns">
         <button id="propClose" title="No pipe: the parts weld or screw straight together">Close-coupled</button>
         <button id="propPar" title="Start a new line parallel to this pipe, at a centre distance">Parallel line…</button>
+        <button id="propBranch" title="Stab a weld nipple into this pipe to start a branch">Branch…</button>
         <button id="propDel" class="danger" title="Delete this pipe and everything beyond it (Del)">Delete</button>
       </div>
       ${err ? `<div class="msg">${err}</div>` : ''}`;
@@ -647,6 +727,7 @@ function renderProps() {
     };
     $('propClose').onclick = () => setDim(n.id, 'cut', 0);
     $('propPar').onclick = () => addParallel(n.id);
+    $('propBranch').onclick = () => { state.branchOn = n.id; renderPartList(); toast('Pick a weld nipple to stab into this pipe'); };
     $('propDel').onclick = () => deleteNode(n.id);
     setTimeout(() => { const f = $('propDim'); if (f && document.activeElement === document.body) { f.focus(); f.select(); } }, 30);
     return;
@@ -686,6 +767,11 @@ function renderProps() {
     <div class="hint">${esc(p?.id || n.part)} – ${esc(p?.description || '')}</div>
     <div class="grid">
       <span>Tag</span><input id="propTag" value="${esc(n.tag || '')}" placeholder="e.g. V-101">
+      ${n.branch ? `<span>Along pipe</span><input id="brAlong" type="number" step="5" value="${round(Number(n.branch.along) || 0)}" title="From the upstream fitting centre (mm)" aria-label="Distance along the pipe in mm">
+      <span>Round pipe</span><div class="rollbtns"><button id="brM" title="−90°">⟲ 90°</button><button id="brP" title="+90°">⟳ 90°</button>
+        <input id="brAngle" type="number" step="15" value="${Number(n.branch.angle) || 0}" aria-label="Angle round the pipe in degrees">°</div>` : ''}
+      ${p?.turn ? `<span>Handle</span><div class="seg"><button id="hOpen" class="${n.handle === 'closed' ? '' : 'on'}">Open</button><button id="hClosed" class="${n.handle === 'closed' ? 'on' : ''}">Closed</button></div>` : ''}
+      ${!n.parent ? `<span>Start</span><select id="propDir">${Object.entries(DIR_TEXT).map(([k, t]) => `<option value="${k}" ${k === (n.startDir || '+X') ? 'selected' : ''}>${t}</option>`).join('')}</select>` : ''}
       ${attachOpts.length > 1 ? `<span>Connected by</span><select id="propAttach">${attachOpts.map((nm) => `<option value="${nm}" ${nm === n.port ? 'selected' : ''}>${esc(portText(p, p.ports.find((q) => q.name === nm)))}</option>`).join('')}</select>` : ''}
       ${free.length > 1 ? `<span>Next part on</span><select id="propNext">${free.map((q) => `<option value="${q.name}" ${state.active === `${n.id}:${q.name}` ? 'selected' : ''}>${esc(portText(p, q))}</option>`).join('')}</select>` : ''}
       <span>Roll</span><div class="rollbtns">
@@ -700,6 +786,18 @@ function renderProps() {
     </div>
     ${err ? `<div class="msg">${err}</div>` : ''}`;
   $('propTag').onchange = (e) => commit(() => { n.tag = e.target.value.trim(); });
+  if (n.branch) {
+    const setB = (k, v) => commit(() => { n.branch = { ...n.branch, [k]: v }; });
+    $('brAlong').onchange = (e) => setB('along', Number(e.target.value) || 0);
+    $('brAngle').onchange = (e) => setB('angle', Number(e.target.value) || 0);
+    $('brM').onclick = () => setB('angle', ((Number(n.branch.angle) || 0) - 90 + 360) % 360);
+    $('brP').onclick = () => setB('angle', ((Number(n.branch.angle) || 0) + 90) % 360);
+  }
+  if (p?.turn) {
+    $('hOpen').onclick = () => commit(() => { delete n.handle; });
+    $('hClosed').onclick = () => commit(() => { n.handle = 'closed'; });
+  }
+  if ($('propDir')) $('propDir').onchange = (e) => commit(() => { n.startDir = e.target.value; state.startDir = e.target.value; needFit = true; });
   if ($('propAttach')) $('propAttach').onchange = (e) => setAttach(n.id, e.target.value);
   if ($('propNext')) {
     if (!free.some((q) => state.active === `${n.id}:${q.name}`)) $('propNext').selectedIndex = -1;
@@ -750,7 +848,7 @@ function showBom() {
 }
 
 function spoolData() {
-  return { app: 'pipe-spool-tool', version: 2, name: state.name, pipeType: state.pipeType, startSize: state.startSize, nodes: state.nodes.map(({ cut, gap, target, ...n }) => n) };
+  return { app: 'pipe-spool-tool', version: 2, name: state.name, pipeType: state.pipeType, startSize: state.startSize, startDir: state.startDir, nodes: state.nodes.map(({ cut, gap, target, ...n }) => n) };
 }
 
 // ----------------------------------------------------------------- export
@@ -777,6 +875,7 @@ function exportItems() {
           kind: 'part', key: library.cacheKey(m.part), part: m.part, matrix: mul(e.matrix, m.matrix), name: p.name,
           geom: { ends: p.ports.map((q) => ({ o: q.origin, d: q.dir, engage: q.engage })), c: p.centre }, ods: p.ports.map((q) => q.od),
           ends: p.ends, info: { category: p.category, type: p.type },
+          turn: p.turn, stem: p.stem, closed: n.handle === 'closed',
         });
       }
     }
@@ -870,6 +969,8 @@ function loadSpool(data) {
   $('projectName').value = state.name;
   if (data.startSize) state.startSize = data.startSize;
   if (data.pipeType) state.pipeType = data.pipeType;
+  if (data.startDir) { state.startDir = data.startDir; $('selDir').value = data.startDir; }
+  state.branchOn = null;
   state.nodes = data.nodes || [];
   state.selected = null;
   state.active = null;
@@ -929,14 +1030,11 @@ function wire() {
   $('groupChips').onclick = (e) => {
     const b = e.target.closest('[data-group]');
     if (!b) return;
-    const g = b.dataset.group;
-    if (e.shiftKey || e.altKey) { // only this group
-      const all = [...$('groupChips').querySelectorAll('[data-group]')].map((x) => x.dataset.group);
-      hiddenGroups = new Set(all.filter((x) => x !== g));
-    } else if (hiddenGroups.has(g)) hiddenGroups.delete(g); else hiddenGroups.add(g);
-    try { localStorage.setItem('pipe-spool-tool.hiddenGroups', JSON.stringify([...hiddenGroups])); } catch { /* ignore */ }
+    partGroup = b.dataset.group;
+    try { localStorage.setItem('pipe-spool-tool.partGroup', partGroup); } catch { /* ignore */ }
     renderPartList();
   };
+  $('selDir').onchange = (e) => { state.startDir = e.target.value; };
   $('partSearch').oninput = renderPartList;
   $('partSearch').onkeydown = (e) => {
     if (e.key === 'Enter') { const first = $('partList').querySelector('[data-part]'); if (first) { addPart(first.dataset.part); e.target.blur(); } }

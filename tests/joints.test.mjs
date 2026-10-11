@@ -25,10 +25,11 @@ test('only matching sizes and connections join', () => {
   assert.ok(directJoin(end('BSP female', 21.3), end('BSP male', 21.3)));
   assert.ok(!directJoin(end('BSP male', 21.3), end('BSP male', 21.3)));
   assert.ok(directJoin(end('flange face', 60.3, { flange: 150 }), end('wafer between flanges', 60.3, { flange: 150 })));
-  assert.ok(!directJoin(end('flange face', 60.3, { flange: 150 }), end('flange face', 60.3, { flange: 165 })), 'different drilling');
+  assert.ok(directJoin(end('flange face', 73.0, { flange: 165, dn: 65 }), end('flange face', 73.0, { flange: 185, dn: 65 })), 'same size, other flange standard');
+  assert.ok(!directJoin(end('flange face', 60.3, { flange: 150, dn: 50 }), end('flange face', 73.0, { flange: 165, dn: 65 })), 'different size');
   assert.ok(!directJoin(end('wafer between flanges', 60.3), end('lugged between flanges', 60.3)));
   // a dairy tube flange (50.8 tube) takes a 50NB wafer valve: same drilling
-  assert.ok(directJoin(end('flange face', 50.8, { flange: 150, pcd: 114 }), end('wafer between flanges', 60.3, { flange: 150, pcd: 114 })));
+  assert.ok(directJoin(end('flange face', 50.8, { flange: 150, dn: 50 }), end('wafer between flanges', 60.3, { flange: 150, dn: 50 })));
 });
 
 test('weld and BSP female ends join through a pipe; others join directly', () => {

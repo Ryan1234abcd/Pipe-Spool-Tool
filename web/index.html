@@ -38,8 +38,12 @@
         <div id="nextEnd" class="next-end"></div>
         <label id="pipeTypeRow" class="inline-row">Pipe type <select id="selType"></select></label>
         <label id="startSizeRow" class="inline-row">Start size <select id="selStart"></select></label>
+        <label id="startDirRow" class="inline-row">Start <select id="selDir">
+          <option value="+X">Horizontal (along X)</option><option value="+Y">Horizontal (along Y)</option>
+          <option value="+Z">Vertical, going up</option><option value="-Z">Vertical, going down</option>
+        </select></label>
         <input id="partSearch" placeholder="Search… (F)" class="search" aria-label="Search parts">
-        <div id="groupChips" class="chips" title="Click to show or hide a group; Shift+click to show only that group"></div>
+        <div id="groupChips" class="chips" role="radiogroup" aria-label="Part type"></div>
         <div id="partList" class="list"></div>
       </div>
     </aside>

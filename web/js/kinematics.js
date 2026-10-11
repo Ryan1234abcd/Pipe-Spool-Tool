@@ -133,7 +133,7 @@ export function solve(nodes, portsOf) {
     const worldPorts = ports.map((p) => transformPort(matrix, p));
     const entry = { matrix, ports: worldPorts, attachPort: own.name };
     // flanged joints match by drilling, not pipe OD (joints.js decides those)
-    const byOd = ![target.family, own.family].some((f) => ['flange', 'wafer', 'start'].includes(f));
+    const byOd = ![target.family, own.family].some((f) => ['flange', 'wafer', 'start', 'branch'].includes(f));
     if (parent && byOd && target.od > 0 && own.od > 0 && Math.abs(target.od - own.od) > OD_TOLERANCE) {
       errors.push({ id: n.id, message: `Size mismatch: Ø${own.od} joined to Ø${target.od}`, kind: 'size' });
     }

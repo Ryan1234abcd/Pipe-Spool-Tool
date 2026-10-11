@@ -170,10 +170,10 @@ test('shrink-wrap keeps the real outside of a valve as one lighter solid', () =>
   const solids = cad.solids(shape);
   const keep = visibleSolids(solids.map((so) => cad.mesh(so)));
   assert.ok(keep.some((k) => !k) || solids.length === 1, 'some hidden inner piece is left out');
-  const s = cad.shrinkWrap(shape, keep, boreFillers(geo[id], lib.parts[id].ends, lib.parts[id]), 5);
+  const s = cad.shrinkWrap(shape, keep, boreFillers(geo[id], lib.parts[id].ends, lib.parts[id]), 5, 10);
   assert.ok(s, 'built');
   assert.ok(cad.isValid(s));
-  assert.ok(cad.count(s, 'TopAbs_FACE') < cad.count(shape, 'TopAbs_FACE'), 'fewer faces');
+  assert.equal(cad.holeFillers(s, 4.5).length, 0, 'no small holes left');
   // same overall size as the real valve (it is not an envelope)
   const a = cad.bbox(shape), b = cad.bbox(s);
   for (let k = 0; k < 3; k++) assert.ok(Math.abs((a[1][k] - a[0][k]) - (b[1][k] - b[0][k])) < 1, `extent ${k}`);
@@ -188,4 +188,18 @@ test('STEP files are written compactly and read back the same', () => {
   const back = cad.readStep(bytes);
   assert.ok(Math.abs(cad.volume(back) - cad.volume(shape)) / cad.volume(shape) < 1e-4);
   assert.equal(new TextDecoder().decode(compactStep(bytes)).length, text.length, 'idempotent');
+});
+
+test('a closed valve has its handle turned a quarter about the stem', () => {
+  const id = 'SBV220';
+  const { shape } = load(id);
+  const g = geo[id];
+  assert.ok(g.stem && g.turn.length, 'stem and handle found');
+  const closed = cad.turnHandle(shape, g.turn, g.stem.o, g.stem.d, 90);
+  assert.equal(cad.count(closed), cad.count(shape));
+  assert.ok(Math.abs(cad.volume(closed) - cad.volume(shape)) / cad.volume(shape) < 1e-6, 'same solids, moved');
+  const a = cad.bbox(shape), b = cad.bbox(closed);
+  const span = (bb, k) => bb[1][k] - bb[0][k];
+  // the lever swaps from along the pipe to across it
+  assert.ok(Math.abs(span(a, 0) - span(b, 0)) > 20 || Math.abs(span(a, 1) - span(b, 1)) > 20);
 });

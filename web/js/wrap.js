@@ -472,8 +472,10 @@ export function boreFillers(geom, ends, part = {}) {
       if (/male/.test(end) && !/female/.test(end)) { from = add(e.o, scale(e.d, e.engage || 0)); L = toCentre + (e.engage || 0); }
     } else if (bend || /cap|plug/.test(part.category || '')) {
       return;
-    } else if (/flange|wafer|lugged/.test(end)) {
-      r = od / 2; L = toCentre;
+    } else if (/flange|wafer|lugged|slip-on/.test(end)) {
+      // a flange's bore is a little over the pipe; a flanged valve's body can be
+      // narrower than the pipe further in, so fill well inside it
+      r = /valve|strainer/.test(part.category || '') ? 0.4 * od : od / 2 + 1.5; L = toCentre;
     } else {
       r = od / 2 - (info.wall_mm || od * 0.05) / 2; L = toCentre;
     }

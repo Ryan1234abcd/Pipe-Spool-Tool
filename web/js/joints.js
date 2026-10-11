@@ -33,15 +33,28 @@ export function directJoin(a, b) {
     case 'weld+weld': case 'bspF+bspM': case 'rjtF+rjtM':
       return sameOd(a, b);
     case 'flange+flange': case 'flange+wafer':
-      // flanges mate by their drilling, not by the pipe welded to them (a dairy
-      // tube flange takes a wafer valve sized for the matching NB pipe)
-      if (a.flange && b.flange) return Math.abs(a.flange - b.flange) < 1 && !(a.pcd && b.pcd && Math.abs(a.pcd - b.pcd) >= 1);
+      // flanges mate by nominal size only (DN), whatever the flange standard or
+      // the pipe welded to them (a dairy tube flange takes a 50NB wafer valve)
+      if (a.dn && b.dn) return a.dn === b.dn;
       return sameOd(a, b);
     case 'pipe+start': case 'bspF+start': case 'bspM+start': case 'flange+start': case 'rjtF+start': case 'rjtM+start':
     case 'start+wafer': case 'start+weld':
       return sameOd(a, b); // the start of a parallel line takes any end of its size
     default: return false;
   }
+}
+
+// dairy tube OD and spiral weld tube ID -> nominal size
+const TUBE_DN = [[12.7, 10], [15.88, 15], [19.05, 20], [25.4, 25], [31.8, 32], [38.1, 40], [50.8, 50], [63.5, 65],
+  [76.2, 80], [101.6, 100], [127, 125], [152.4, 150], [203.2, 200], [254, 250], [304.8, 300]];
+
+/** Nominal size (DN number) of a library end. */
+export function nominalSize(e) {
+  const m = /DN(\d+)/.exec(e.dn || '');
+  if (m) return Number(m[1]);
+  const v = e.id_mm || e.od_mm;
+  const row = TUBE_DN.find(([d]) => Math.abs(d - v) < 1);
+  return row ? row[1] : null;
 }
 
 /** Does this end take a pipe (welded or threaded into it)? */

@@ -85,12 +85,41 @@
    ]
   },
   {
+   "system": "adapters",
+   "name": "Adapters – weld to BSP / RJT",
+   "size_basis": "NB (BSP) with matching pipe or tube size",
+   "notes": "Weld nipples, weld sockets and RJT adapters that join a welded pipe/tube system to a BSP thread.",
+   "folder": "models/adapters",
+   "types": [
+    {
+     "type": "weld-nipple-pipe",
+     "name": "Weld Nipple – pipe × BSP male",
+     "category": "adapter",
+     "folder": "models/adapters/weld-nipple-pipe-bspm",
+     "count": 12,
+     "parts": [
+      "SWN20"
+     ]
+    }
+   ]
+  },
+  {
    "system": "valves",
    "name": "Valves & strainers",
    "size_basis": "NB (DN)",
    "notes": "Threaded BSP stainless valves, cast iron flanged/wafer valves, and one third-party flanged strainer.",
    "folder": "models/valves",
    "types": [
+    {
+     "type": "ball-2pc",
+     "name": "Ball Valve 2-piece BSP F×F",
+     "category": "valve",
+     "folder": "models/valves/ball-valve-2pc-bsp",
+     "count": 10,
+     "parts": [
+      "SBV220"
+     ]
+    },
     {
      "type": "butterfly-lugged",
      "name": "Butterfly Valve – lugged, cast iron",
@@ -917,6 +946,125 @@
     "50NB"
    ],
    "function": "non-return"
+  },
+  "SWN20": {
+   "part_number": "SWN20",
+   "supplier": "The Metal Company",
+   "description": "20NB Stainless Steel BSP Weld Nipple 316",
+   "system": "adapters",
+   "system_name": "Adapters – weld to BSP / RJT",
+   "category": "adapter",
+   "type": "weld-nipple-pipe",
+   "type_name": "Weld Nipple – pipe × BSP male",
+   "size_label": "20NB",
+   "ends": [
+    {
+     "code": 20,
+     "label": "20NB",
+     "dn": "DN20",
+     "inch": "3/4\"",
+     "standard": "ASME B36.19M",
+     "od_mm": 26.7,
+     "wall_mm": 2.11,
+     "schedule": "10S",
+     "end": "plain weld end"
+    },
+    {
+     "code": 20,
+     "label": "20NB",
+     "dn": "DN20",
+     "inch": "3/4\"",
+     "thread": "3/4\" BSP",
+     "end": "BSP male",
+     "od_mm": 26.9,
+     "filled": [
+      "od_mm",
+      "thread_od_mm",
+      "tpi"
+     ],
+     "thread_od_mm": 26.441,
+     "tpi": 14
+    }
+   ],
+   "material": "316",
+   "files": {
+    "step": "models/adapters/weld-nipple-pipe-bspm/TMC_SWN20_V1.step"
+   },
+   "model_version": 1,
+   "source": {
+    "original_path": "Threaded Fittings/Threaded Fittings BSP/Adapter Weld Nipple Pipe/TMC_SWN20_V1.step"
+   },
+   "links": {
+    "category": "https://www.themetalcompany.co.nz/shop/bsp-threaded-fittings",
+    "search": "https://www.themetalcompany.co.nz/search/?query=SWN20"
+   },
+   "search": "swn20 weld nipple – pipe × bsp male adapter adapters to / rjt 20nb 316 3/4\" dn20 plain end 26.7",
+   "connects": [
+    "20NB"
+   ]
+  },
+  "SBV220": {
+   "part_number": "SBV220",
+   "supplier": "The Metal Company",
+   "description": "20NB Stainless Steel BSP 2pc Ball Valve 316",
+   "system": "valves",
+   "system_name": "Valves & strainers",
+   "category": "valve",
+   "type": "ball-2pc",
+   "type_name": "Ball Valve 2-piece BSP F×F",
+   "size_label": "20NB",
+   "ends": [
+    {
+     "code": 20,
+     "label": "20NB",
+     "dn": "DN20",
+     "inch": "3/4\"",
+     "thread": "3/4\" BSP",
+     "end": "BSP female",
+     "od_mm": 26.9,
+     "filled": [
+      "od_mm",
+      "thread_od_mm",
+      "tpi"
+     ],
+     "thread_od_mm": 26.441,
+     "tpi": 14
+    },
+    {
+     "code": 20,
+     "label": "20NB",
+     "dn": "DN20",
+     "inch": "3/4\"",
+     "thread": "3/4\" BSP",
+     "end": "BSP female",
+     "od_mm": 26.9,
+     "filled": [
+      "od_mm",
+      "thread_od_mm",
+      "tpi"
+     ],
+     "thread_od_mm": 26.441,
+     "tpi": 14
+    }
+   ],
+   "material": "316",
+   "valve": "ball",
+   "files": {
+    "step": "models/valves/ball-valve-2pc-bsp/TMC_SBV220_V1.step"
+   },
+   "model_version": 1,
+   "source": {
+    "original_path": "Valves/Threaded/2 Piece Ball Valve/TMC_SBV220_V1.step"
+   },
+   "links": {
+    "category": "https://www.themetalcompany.co.nz/shop/valves",
+    "search": "https://www.themetalcompany.co.nz/search/?query=SBV220"
+   },
+   "search": "sbv220 ball valve 2-piece bsp f×f valves & strainers 20nb 316 3/4\" dn20 female",
+   "connects": [
+    "20NB"
+   ],
+   "function": "isolation"
   }
  }
 }

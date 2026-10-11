@@ -209,7 +209,7 @@ export class Cad {
    */
   holeFillers(shape, maxR) {
     const { oc } = this;
-    const out = [];
+    const found = []; // hole faces; a hole is often split into two half-cylinders
     const exp = new oc.TopExp_Explorer(shape, oc.TopAbs_ShapeEnum.TopAbs_FACE, oc.TopAbs_ShapeEnum.TopAbs_SHAPE);
     for (; exp.More(); exp.Next()) {
       const face = oc.TopoDS.Face(exp.Current());
@@ -219,10 +219,12 @@ export class Cad {
         if (String(ad.GetType()) !== 'GeomAbs_Cylinder') continue;
         const cyl = ad.Cylinder();
         const r = cyl.Radius();
-        if (r > maxR || ad.LastUParameter() - ad.FirstUParameter() < 1.8 * Math.PI) continue;
+        if (r > maxR) continue;
         const ax = cyl.Axis();
         const o = [ax.Location().X(), ax.Location().Y(), ax.Location().Z()];
-        const d = [ax.Direction().X(), ax.Direction().Y(), ax.Direction().Z()];
+        let d = [ax.Direction().X(), ax.Direction().Y(), ax.Direction().Z()];
+        const k = d.findIndex((v) => Math.abs(v) > 1e-6);
+        if (d[k] < 0) d = d.map((v) => -v);
         // axial extent from the face's triangulation
         const loc = new oc.TopLoc_Location();
         const tri = oc.BRep_Tool.Triangulation(face, loc, 0);
@@ -238,11 +240,27 @@ export class Cad {
         }
         loc.delete();
         if (h1 - h0 < 1e-3) continue;
-        out.push({ t: 'cyl', o: o.map((v, k) => v + d[k] * h0), d, r: r * 1.002, L: h1 - h0 });
+        found.push({ o, d, r, h0, h1, span: ad.LastUParameter() - ad.FirstUParameter() });
       } finally { ad.delete(); }
     }
     exp.delete();
-    return out;
+    // join the pieces of each hole (same axis line and radius)
+    const holes = [];
+    for (const f of found) {
+      const same = holes.find((g) => Math.abs(g.r - f.r) < 1e-3 && Math.abs(Math.abs(g.d[0] * f.d[0] + g.d[1] * f.d[1] + g.d[2] * f.d[2]) - 1) < 1e-6 && (() => {
+        const w = [f.o[0] - g.o[0], f.o[1] - g.o[1], f.o[2] - g.o[2]];
+        const t = w[0] * g.d[0] + w[1] * g.d[1] + w[2] * g.d[2];
+        // same line, and the pieces meet along it (holes in two flanges stay apart)
+        return Math.hypot(w[0] - g.d[0] * t, w[1] - g.d[1] * t, w[2] - g.d[2] * t) < 1e-3
+          && f.h0 + t <= g.h1 + 0.5 && f.h1 + t >= g.h0 - 0.5;
+      })());
+      if (same) {
+        const t = (f.o[0] - same.o[0]) * same.d[0] + (f.o[1] - same.o[1]) * same.d[1] + (f.o[2] - same.o[2]) * same.d[2];
+        same.span += f.span; same.h0 = Math.min(same.h0, f.h0 + t); same.h1 = Math.max(same.h1, f.h1 + t);
+      } else holes.push({ ...f });
+    }
+    return holes.filter((h) => h.span >= 1.8 * Math.PI)
+      .map((h) => ({ t: 'cyl', o: h.o.map((v, k) => v + h.d[k] * h.h0), d: h.d, r: h.r * 1.02, L: h.h1 - h.h0 })); // a little over size: no coincident faces
   }
 
   /** Keep only the outer skin of each solid (internal voids are dropped). */
@@ -272,36 +290,69 @@ export class Cad {
    * @param prims  filler primitives from wrap.js boreFillers()
    * @param keep   which of this.solids(shape) to keep (wrap.js visibleSolids)
    */
-  shrinkWrap(shape, keep, prims, res) {
+  shrinkWrap(shape, keep, prims, res, minHoleR = 0) {
     const diag = (x) => { const b = this.bbox(x); return Math.hypot(b[1][0] - b[0][0], b[1][1] - b[0][1], b[1][2] - b[0][2]); };
     // hidden pieces, empty ones (springs drawn as surfaces) and bits smaller than res go
     const solids = this.solids(shape).filter((so, i) => keep[i] && this.volume(so) > 1e-3 && diag(so) >= res)
       .sort((a, b) => this.volume(b) - this.volume(a));
     if (!solids.length) return null;
-    const holes = solids.flatMap((so) => this.holeFillers(so, res / 2));
-    const fill = [...prims, ...holes].map((p) => this.buildPrimitives([p]));
-    let f = this.fuse([...solids, ...fill]);
-    let result;
-    if (f.ok) result = f.shape;
-    else {
-      // merge one piece at a time, leaving out any piece that breaks the merge
-      let acc = solids[0];
-      const apart = [];
-      for (const piece of [...solids.slice(1), ...fill]) {
-        f = this.fuse([acc, piece]);
-        if (f.ok) acc = f.shape;
-        else if (solids.includes(piece)) apart.push(piece);
-      }
-      result = apart.length ? this.compound([acc, ...apart]) : acc;
+    const holes = solids.flatMap((so) => this.holeFillers(so, Math.max(res / 2, minHoleR)));
+    // simplest first; if the result isn't a sound solid, try with fewer fillers
+    for (const set of [[...prims, ...holes], holes, prims, []]) {
+      const out = this._wrapWith(solids.map((x) => this.copy(x)), set.map((p) => this.buildPrimitives([p])));
+      if (out) return out;
     }
-    const skin = this.outerSkin(result);
-    try {
-      const up = new this.oc.ShapeUpgrade_UnifySameDomain(skin, true, true, false);
-      up.Build();
-      const r = up.Shape();
-      up.delete();
-      return this.isValid(r) ? r : skin;
-    } catch { return skin; }
+    return solids.length === 1 ? solids[0] : this.compound(solids);
+  }
+
+  /** Merge solids and fillers, keep the outer skin; null unless the result is valid. */
+  _wrapWith(solids, fill) {
+    // a union is never smaller than its biggest piece: a "successful" merge
+    // that lost the body is a failed one
+    const sound = (f, ...parts) => f.ok && this.volume(f.shape) >= 0.98 * Math.max(...parts.map((x) => this.volume(x)));
+    const unify = (x) => {
+      try {
+        const up = new this.oc.ShapeUpgrade_UnifySameDomain(x, true, true, false);
+        up.Build();
+        const r = up.Shape();
+        up.delete();
+        return r;
+      } catch { return null; }
+    };
+    // outer skin only (inner voids dropped), faces merged; the first valid one wins
+    const finish = (result) => {
+      let skin = null;
+      try { skin = this.outerSkin(result); } catch { skin = null; }
+      const vol = this.volume(result);
+      for (const c of [skin && unify(skin), skin, unify(result), result]) if (c && this.isValid(c) && this.volume(c) >= 0.98 * vol) return c;
+      return null;
+    };
+    let f;
+    try { f = this.fuse([...solids, ...fill]); } catch { f = { ok: false }; }
+    if (sound(f, ...solids, ...fill)) { const out = finish(f.shape); if (out) return out; }
+    // one piece at a time, leaving out any piece that breaks the merge
+    let acc = solids[0];
+    const apart = [];
+    for (const piece of [...solids.slice(1), ...fill]) {
+      // a failed merge can spoil its inputs, so merge a copy of what we have
+      try { f = this.fuse([this.copy(acc), piece]); } catch { f = { ok: false }; }
+      if (sound(f, acc, piece) && this.isValid(f.shape)) acc = f.shape;
+      else if (solids.includes(piece)) apart.push(piece);
+    }
+    return finish(apart.length ? this.compound([acc, ...apart]) : acc);
+  }
+
+  /**
+   * The part with its handle turned: the solids listed in `turn` rotated by
+   * `deg` about the stem axis (o, d). Returns a compound of all the solids.
+   */
+  turnHandle(shape, turn, o, d, deg) {
+    const { oc } = this;
+    const t = new oc.gp_Trsf();
+    t.SetRotation(new oc.gp_Ax1(this._pnt(o), this._dir(d)), (deg * Math.PI) / 180);
+    const loc = new oc.TopLoc_Location(t);
+    const out = this.solids(shape).map((so, i) => (turn.includes(i) ? so.Moved(loc, false) : so));
+    return this.compound(out);
   }
 
   /** One solid from a wrap.js primitive list. */
@@ -318,6 +369,15 @@ export class Cad {
     if (!shapes.length) throw new Error('Nothing to build');
     const f = this.fuse(shapes);
     return f.ok ? f.shape : this.compound(shapes);
+  }
+
+  /** An independent copy (booleans can widen the tolerances of their inputs). */
+  copy(shape) {
+    const t = new this.oc.gp_Trsf();
+    const mk = new this.oc.BRepBuilderAPI_Transform(shape, t, true, false);
+    const r = mk.Shape();
+    mk.delete();
+    return r;
   }
 
   /** Place a shape with a row-major 4x4 rigid transform. */
