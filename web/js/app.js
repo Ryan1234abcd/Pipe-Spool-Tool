@@ -1,27 +1,29 @@
 // Spool builder: main application (runs entirely in the browser).
+//
+// Insert parts from the library, roll them, and set centre-to-centre (or
+// cut-length) dimensions on the pipes between them. A part can only go on an
+// open end it fits: same pipe size and a matching connection.
 import * as THREE from 'three';
 import { CSS2DObject } from 'three/addons/CSS2DRenderer.js';
-import { Viewer, toMatrix4 } from './viewer.js';
-import { solve, openPorts, pipePorts, START_DIRS, OD_TOLERANCE } from './kinematics.js';
-import { PIPE_TYPES, pipeType, sizeForOd, odLabel } from './pipe-types.js';
+import { Viewer, toMatrix4, geometryFromMesh } from './viewer.js';
+import { solve, openPorts, pipePorts, applyPoint } from './kinematics.js';
+import { joinOptions, pipeFor, centreToEnd, cutLength, dimFromCut } from './joints.js';
 import { Library, kvGet, kvSet } from './library.js';
 import { createPartLoader } from './parts.js';
 import { startCad, cad } from './cad-client.js';
 import { toast, esc, ask, saveFile } from './ui.js';
-import { LibraryEditor } from './library-editor.js';
 
 const COLORS = { pipe: 0x9aabbd, part: 0xd38a3a, fitting: 0x8195ab };
-const SPOOLS_KEY = 'pipe-spool-tool.spools';
+const SPOOLS_KEY = 'pipe-spool-tool.spools.v2';
+const DEFAULT_CUT = 150;
 
 // ---------------------------------------------------------------------- state
 const state = {
   name: 'Spool-01',
-  pipeType: PIPE_TYPES[0].id,
-  defaultSize: 'DN50',
+  startSize: null,
   nodes: [],
   selected: null,
-  active: null, // "nodeId:portName" – where the next component goes
-  lastPipeLength: 200,
+  active: null, // "nodeId:portName" – where the next part goes
 };
 const library = new Library();
 const parts = createPartLoader(library);
@@ -31,19 +33,18 @@ const undoStack = [];
 const redoStack = [];
 let nextId = 1;
 let needFit = true;
-let recent = [];
 
 const $ = (id) => document.getElementById(id);
 const viewer = new Viewer($('viewport'));
 const materials = {};
+const round = (v, n = 1) => Math.round(v * 10 ** n) / 10 ** n;
 
-function material(kind, selected, xray) {
-  const key = `${kind}|${selected}|${xray}`;
+function material(kind, selected) {
+  const key = `${kind}|${selected}`;
   if (!materials[key]) {
     materials[key] = new THREE.MeshStandardMaterial({
-      color: COLORS[kind], metalness: 0.25, roughness: 0.55,
+      color: COLORS[kind], metalness: 0.25, roughness: 0.55, side: THREE.DoubleSide,
       emissive: selected ? 0x1f5fa8 : 0x000000, emissiveIntensity: selected ? 0.55 : 0,
-      transparent: xray, opacity: xray ? 0.35 : 1, depthWrite: !xray, side: THREE.DoubleSide,
     });
   }
   return materials[key];
@@ -56,67 +57,88 @@ const newId = () => {
 };
 const nodeById = (id) => state.nodes.find((n) => n.id === id);
 const childrenOf = (id) => state.nodes.filter((n) => n.parent === id);
-const type = () => pipeType(state.pipeType);
-const pipeSize = (label) => type().sizes.find((s) => s.label === label) || null;
-const isFitting = (p) => /fitting/i.test(p?.category || '');
+const childAt = (id, port) => state.nodes.find((c) => c.parent === id && c.parentPort === port) || null;
+const partOf = (n) => (n?.type === 'part' ? library.parts.get(n.part) : null);
+const isFitting = (p) => !/valve|strainer/.test(p?.category || '');
 
 function nodeLabel(n) {
   if (!n) return '?';
-  if (n.type === 'pipe') return 'Pipe';
-  return library.parts.get(n.part)?.name || n.part.split('/').pop();
+  if (n.type === 'pipe') return `Pipe ${n.label}`;
+  return partOf(n)?.name || n.part;
 }
 
-function nodeSizeText(n) {
-  if (n.type === 'pipe') return n.size;
-  const ps = library.parts.get(n.part)?.ports || [];
-  return [...new Set(ps.map((p) => odLabel(type(), p.od)))].join('×');
-}
-
-/** Does this part connect to the current pipe type? */
-function fitsType(p) {
-  return p.ports.some((x) => sizeForOd(type(), x.od));
-}
-
-const resolved = new Map(); // node id -> {geometry, ports}
-
-async function loadNode(n) {
+/** Local ports of a node (part ports from geometry.json, or the pipe's two ends). */
+function localPorts(n) {
   if (n.type === 'pipe') {
-    const s = pipeSize(n.size);
-    if (!s) throw new Error(`${n.size} is not a size of ${type().name}`);
-    return { geometry: null, ports: pipePorts(s.od, Number(n.length) || 1) };
+    return pipePorts(n.od, Math.max(n.cut || 0, 0)).map((p) => ({ ...p, family: 'pipe', label: n.label, threaded: !!n.threaded }));
   }
-  const meta = library.parts.get(n.part);
-  if (!meta) throw new Error(`Part not in the library: ${n.part}. Open the library folder that contains it.`);
-  if (!meta.ports.length) throw new Error(`${meta.name} has no connection ports set up`);
-  const d = await parts.get(n.part);
-  return { geometry: d.geometry, ports: meta.ports };
+  return partOf(n)?.ports || null;
 }
 
-function portsOf(n) { return resolved.get(n.id)?.ports || null; }
+/** Centre-to-end data of the part on the far side of a pipe end. */
+function sideOf(n, portName) {
+  const p = partOf(n);
+  const port = p?.ports.find((x) => x.name === portName);
+  if (!port) return null;
+  return { c2e: centreToEnd(port, p.centre), engage: port.family === 'bspF' ? port.engage : 0 };
+}
+
+/** The parts at each end of a pipe: {a (upstream), b (downstream)}. */
+function pipeSides(n) {
+  const up = nodeById(n.parent);
+  const down = childAt(n.id, 'B');
+  return {
+    a: up ? sideOf(up, n.parentPort) : null,
+    b: down ? sideOf(down, down.port) : null,
+  };
+}
+
+/** Gap at a joint: a pipe goes into a BSP female end by its thread engagement. */
+function jointGap(n) {
+  if (!n.parent) return 0;
+  const parent = nodeById(n.parent);
+  const target = localPorts(parent)?.find((p) => p.name === n.parentPort);
+  const own = localPorts(n)?.find((p) => p.name === n.port);
+  if (!target || !own) return 0;
+  if (own.family === 'pipe' && target.family === 'bspF') return -target.engage;
+  if (target.family === 'pipe' && own.family === 'bspF') return -own.engage;
+  return 0;
+}
 
 // ---------------------------------------------------------------- rebuilding
+const meshes = new Map(); // part id -> THREE geometry
 let buildSeq = 0;
+
 async function rebuild() {
   const seq = ++buildSeq;
-  const loadErrors = [];
-  await Promise.all(state.nodes.map(async (n) => {
-    try { resolved.set(n.id, await loadNode(n)); } catch (e) { resolved.delete(n.id); loadErrors.push({ id: n.id, message: e.message }); }
-  }));
-  if (seq !== buildSeq) return;
-  for (const id of [...resolved.keys()]) if (!nodeById(id)) resolved.delete(id);
-  solved = solve(state.nodes, portsOf);
-  solved.errors = solved.errors.filter((e) => !(e.message === 'No ports defined' && loadErrors.some((l) => l.id === e.id)));
-  solved.errors.push(...loadErrors);
+  // pipe lengths from their dimensions
+  for (const n of state.nodes) {
+    if (n.type !== 'pipe') continue;
+    const { a, b } = pipeSides(n);
+    n.cut = round(cutLength(n.dim, a, b), 2);
+  }
+  for (const n of state.nodes) n.gap = jointGap(n);
+  solved = solve(state.nodes, localPorts);
+  for (const n of state.nodes) {
+    if (n.type === 'pipe' && n.cut < 0) solved.errors.push({ id: n.id, message: `Dimension too short by ${round(-n.cut)} mm` });
+  }
   open = openPorts(state.nodes, solved.placed);
-  kvSet('lastSpool', spoolData());
   const keys = open.map((o) => `${o.nodeId}:${o.port.name}`);
-  if (state.active && !keys.includes(state.active) && !portByKey(state.active)) state.active = null;
+  if (state.active && !keys.includes(state.active)) state.active = null;
   if (!state.active && keys.length) state.active = keys[keys.length - 1];
+  kvSet('lastSpool', spoolData());
   draw();
   renderTree();
   renderProps();
   renderStatus();
   renderPartList();
+  // load display meshes of parts not seen yet, then redraw
+  const missing = [...new Set(state.nodes.filter((n) => n.type === 'part' && !meshes.has(n.part)).map((n) => n.part))];
+  if (!missing.length) return;
+  await Promise.all(missing.map(async (id) => {
+    try { meshes.set(id, (await parts.get(id)).geometry); } catch (e) { toast(`${library.parts.get(id)?.name || id}: ${e.message}`, true); }
+  }));
+  if (seq === buildSeq) draw();
 }
 
 function portByKey(key) {
@@ -125,51 +147,79 @@ function portByKey(key) {
   return solved.placed.get(id)?.ports.find((p) => p.name === name) || null;
 }
 
-function childAt(key) {
-  const [id, name] = key.split(':');
-  return state.nodes.find((c) => c.parent === id && c.parentPort === name) || null;
+/** World centre of a part node. */
+function centreOf(n) {
+  const e = solved.placed.get(n.id);
+  const p = partOf(n);
+  return e && p ? applyPoint(e.matrix, p.centre) : null;
 }
 
 function draw() {
   viewer.clear();
-  const xray = $('chkXray').checked;
   const showDims = $('chkDims').checked;
-  const showTags = $('chkTags').checked;
   for (const n of state.nodes) {
     const e = solved.placed.get(n.id);
-    const r = resolved.get(n.id);
-    if (!e || !r) continue;
+    if (!e) continue;
     const sel = n.id === state.selected;
-    let mesh;
+    let mesh = null;
     if (n.type === 'pipe') {
-      const L = Number(n.length) || 1;
-      const od = pipeSize(n.size).od;
-      const g = new THREE.CylinderGeometry(od / 2, od / 2, L, 32, 1, false);
-      g.rotateZ(-Math.PI / 2).translate(L / 2, 0, 0);
-      mesh = new THREE.Mesh(g, material('pipe', sel, xray));
-    } else {
-      mesh = new THREE.Mesh(r.geometry, material(isFitting(library.parts.get(n.part)) ? 'fitting' : 'part', sel, xray));
+      const L = n.cut;
+      if (L > 0.01) {
+        const g = new THREE.CylinderGeometry(n.od / 2, n.od / 2, L, 32, 1, false);
+        g.rotateZ(-Math.PI / 2).translate(L / 2, 0, 0);
+        mesh = new THREE.Mesh(g, material('pipe', sel));
+      }
+    } else if (meshes.has(n.part)) {
+      mesh = new THREE.Mesh(meshes.get(n.part), material(isFitting(partOf(n)) ? 'fitting' : 'part', sel));
     }
-    mesh.matrixAutoUpdate = false;
-    mesh.matrix.copy(toMatrix4(e.matrix));
-    mesh.userData.nodeId = n.id;
-    viewer.content.add(mesh);
-
-    if (n.type === 'pipe' && showDims) {
-      const a = e.ports[0].origin, b = e.ports[1].origin;
-      addLabel('dim-label', `${Math.round(Number(n.length) * 10) / 10}`, [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2]);
+    if (mesh) {
+      mesh.matrixAutoUpdate = false;
+      mesh.matrix.copy(toMatrix4(e.matrix));
+      mesh.userData.nodeId = n.id;
+      viewer.content.add(mesh);
     }
-    if (n.type !== 'pipe' && showTags && (n.tag || !isFitting(library.parts.get(n.part)))) {
-      const box = new THREE.Box3().setFromObject(mesh);
-      const c = box.getCenter(new THREE.Vector3());
-      addLabel('tag-label', n.tag || nodeLabel(n), [c.x, c.y, box.max.z + 15]);
+    if (n.type === 'part' && n.tag) {
+      const c = centreOf(n);
+      if (c) addLabel('tag-label', n.tag, [c[0], c[1], c[2] + (partOf(n).bbox?.[1]?.[2] || 50) + 20]);
     }
+    if (n.type === 'pipe' && showDims) drawDimension(n, e);
   }
   for (const o of open) drawPort(o.nodeId, o.port);
-  const act = portByKey(state.active);
-  if (act && !open.some((o) => `${o.nodeId}:${o.port.name}` === state.active)) drawPort(state.active.split(':')[0], act, true);
-  if (needFit && viewer.content.children.length) { viewer.fit(); needFit = false; }
+  const shown = viewer.content.children.some((c) => c.isMesh && c.userData.nodeId);
+  if (shown && (needFit || offScreen())) { viewer.fit(); needFit = false; }
   viewer.render();
+}
+
+/** Is the newest part outside the view? (then the view is refitted) */
+function offScreen() {
+  const n = nodeById(state.selected);
+  const c = n?.type === 'part' ? centreOf(n) : null;
+  if (!c || !lastAdded || lastAdded !== n.id) return false;
+  lastAdded = null;
+  viewer.camera.updateMatrixWorld();
+  const v = new THREE.Vector3(...c).project(viewer.camera);
+  return Math.abs(v.x) > 0.85 || Math.abs(v.y) > 0.85;
+}
+let lastAdded = null;
+
+/** Dimension line between the centres either side of a pipe, with its value. */
+function drawDimension(n, e) {
+  const up = nodeById(n.parent);
+  const down = childAt(n.id, 'B');
+  const cc = n.dim?.mode === 'cc';
+  const a = cc && up?.type === 'part' ? centreOf(up) : e.ports[0].origin;
+  const b = cc ? (down?.type === 'part' ? centreOf(down) : e.ports[1].origin) : e.ports[1].origin;
+  if (!a || !b) return;
+  const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(...a), new THREE.Vector3(...b)]);
+  const line = new THREE.Line(geo, new THREE.LineDashedMaterial({ color: 0x2f6fb3, dashSize: 8, gapSize: 5, depthTest: false }));
+  line.computeLineDistances();
+  line.renderOrder = 5;
+  viewer.content.add(line);
+  const text = cc ? `${down ? 'C-C' : 'C-E'} ${round(n.dim.value)}` : `${round(n.cut)}`;
+  const el = addLabel('dim-label', text, a.map((v, i) => (v + b[i]) / 2));
+  el.dataset.node = n.id;
+  el.title = `Cut length ${round(n.cut)} mm – click to edit`;
+  el.classList.toggle('sel', n.id === state.selected);
 }
 
 function addLabel(cls, text, pos) {
@@ -179,9 +229,10 @@ function addLabel(cls, text, pos) {
   const lbl = new CSS2DObject(el);
   lbl.position.set(...pos);
   viewer.content.add(lbl);
+  return el;
 }
 
-function drawPort(nodeId, p, insert) {
+function drawPort(nodeId, p) {
   const key = `${nodeId}:${p.name}`;
   const active = key === state.active;
   const r = Math.max(6, (p.od || 50) * 0.18);
@@ -197,14 +248,6 @@ function drawPort(nodeId, p, insert) {
   grp.add(sph, cone);
   grp.position.set(...p.origin);
   grp.traverse((o) => { o.userData.portKey = key; });
-  if (active && insert) {
-    const el = document.createElement('div');
-    el.className = 'port-label';
-    el.textContent = 'insert here';
-    const l = new CSS2DObject(el);
-    l.position.set(0, 0, r * 3);
-    grp.add(l);
-  }
   viewer.content.add(grp);
 }
 
@@ -223,85 +266,83 @@ function commit(fn) {
 function undo() { if (!undoStack.length) return; redoStack.push(snapshot()); restore(undoStack.pop()); rebuild(); }
 function redo() { if (!redoStack.length) return; undoStack.push(snapshot()); restore(redoStack.pop()); rebuild(); }
 
-/** Which of the new component's ports mates with the target port. */
-function choosePort(ports, target) {
-  if (!target) return ports[0]?.name || 'A';
-  const fit = (p) => !(target.od > 0) || !(p.od > 0) || Math.abs(p.od - target.od) <= OD_TOLERANCE;
-  const same = ports.find((p) => fit(p) && p.kind === target.kind) || ports.find(fit);
-  return (same || ports[0]).name;
-}
-
-/** The port that continues the run: the one pointing most away from the attach port. */
-function runPort(ports, attachName, prefer) {
-  const free = ports.filter((p) => p.name !== attachName);
-  if (prefer && free.some((p) => p.name === prefer)) return prefer;
-  const own = ports.find((p) => p.name === attachName);
-  if (own && free.length > 1) free.sort((a, b) => dot3(a.dir, own.dir) - dot3(b.dir, own.dir));
-  return free[0]?.name;
-}
 const dot3 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 
+/** The end that continues the run: the one pointing most away from the attach end. */
+function runPort(ports, attachName) {
+  const own = ports.find((p) => p.name === attachName);
+  const free = ports.filter((p) => p.name !== attachName);
+  if (own && free.length > 1) free.sort((a, b) => dot3(a.dir, own.dir) - dot3(b.dir, own.dir));
+  return free[0]?.name || null;
+}
+
+/** The open end the next part goes on, as a port with family/od. */
 function activeTarget() {
-  const port = portByKey(state.active);
-  return port ? { nodeId: state.active.split(':')[0], port } : null;
+  if (!state.active) return null;
+  const [nodeId, name] = state.active.split(':');
+  const n = nodeById(nodeId);
+  const port = localPorts(n)?.find((p) => p.name === name);
+  return port ? { nodeId, n, port } : null;
 }
 
-async function addComponent(kind, extra = {}) {
-  const target = state.nodes.length ? activeTarget() : null;
-  if (state.nodes.length && !target) { toast('Pick where to add: click a blue end marker, or use Insert before / after.', true); return; }
-  const n = { id: newId(), type: kind, roll: 0, gap: 0, ...extra };
-  if (kind === 'pipe') {
-    const s = target?.port.od ? sizeForOd(type(), target.port.od) : pipeSize(state.defaultSize);
-    if (!s) { toast(`No ${type().name} size matches Ø${target.port.od} – change the pipe type or size.`, true); return; }
-    n.size = s.label;
-    n.length = state.lastPipeLength;
+/** Ends a part could join at the active end (or the start size when empty). */
+function optionsFor(part) {
+  if (!state.nodes.length) {
+    const ok = part.ports.filter((p) => p.label === state.startSize);
+    return ok.map((port) => ({ port, viaPipe: false }));
   }
-  let ports;
-  try { ports = (await loadNode(n)).ports; } catch (e) { toast(e.message, true); return; }
-  n.port = choosePort(ports, target?.port);
-  if (target) { n.parent = target.nodeId; n.parentPort = target.port.name; } else n.startDir = '+X';
+  const t = activeTarget();
+  return t ? joinOptions(t.port, part.ports) : [];
+}
+
+/** Pipe dimension that gives a default cut length between two parts. */
+function defaultDim(a, b) {
+  return { mode: 'cc', value: Math.ceil(dimFromCut('cc', DEFAULT_CUT, a, b) / 10) * 10 };
+}
+
+function addPart(id) {
+  const part = library.parts.get(id);
+  if (!part) return;
+  const opts = optionsFor(part);
+  if (!opts.length) { toast(`${part.name} doesn't fit the ${state.nodes.length ? 'selected end' : 'start size'}.`, true); return; }
+  const opt = opts[0];
+  const t = state.nodes.length ? activeTarget() : null;
   commit(() => {
-    const next = runPort(ports, n.port);
-    if (target) {
-      const existing = childAt(`${target.nodeId}:${target.port.name}`);
-      if (existing) {
-        if (!next) throw new Error('A part with one connection cannot be inserted between two others');
-        existing.parent = n.id;
-        existing.parentPort = next;
-        // a pipe moved onto the far end of e.g. a reducer takes that end's size
-        const nextOd = ports.find((p) => p.name === next)?.od;
-        const s = existing.type === 'pipe' && nextOd ? sizeForOd(type(), nextOd) : null;
-        if (s && s.label !== existing.size) cascadeSize(existing, s.label, n.id);
+    const n = { id: newId(), type: 'part', part: id, port: opt.port.name, roll: 0 };
+    if (!t) { n.startDir = '+X'; state.nodes.push(n); needFit = true; } else {
+      let parent = t.nodeId, parentPort = t.port.name;
+      if (opt.viaPipe) {
+        const spec = pipeFor(t.port);
+        const pipe = { id: newId(), type: 'pipe', ...spec, port: 'A', parent, parentPort, roll: 0 };
+        const a = t.n.type === 'part' ? sideOf(t.n, t.port.name) : null;
+        const b = { c2e: centreToEnd(opt.port, part.centre), engage: opt.port.family === 'bspF' ? opt.port.engage : 0 };
+        pipe.dim = defaultDim(a, b);
+        state.nodes.push(pipe);
+        parent = pipe.id; parentPort = 'B';
       }
+      Object.assign(n, { parent, parentPort });
+      state.nodes.push(n);
     }
-    state.nodes.push(n);
-    state.selected = n.id;
+    const next = runPort(part.ports, n.port);
     state.active = next ? `${n.id}:${next}` : null;
-    if (state.nodes.length === 1) needFit = true;
+    state.selected = n.id;
+    lastAdded = n.id;
   });
-  if (kind === 'part') {
-    recent = [n.part, ...recent.filter((x) => x !== n.part)].slice(0, 6);
-    try { localStorage.setItem('pipe-spool-tool.recent', JSON.stringify(recent)); } catch { /* ignore */ }
-  }
-  if (kind === 'pipe') setTimeout(() => { const el = $('propLength'); if (el) { el.focus(); el.select(); } }, 60);
 }
 
-/** Make the next added component go in front of (before) or after a component. */
-function insertAt(id, where) {
-  const n = nodeById(id);
-  const e = solved.placed.get(id);
-  if (!n || !e) return;
-  if (where === 'before') {
-    state.active = n.parent ? `${n.parent}:${n.parentPort}` : `${n.id}:${e.attachPort}`;
-  } else {
-    const ports = portsOf(n) || [];
-    const out = runPort(ports, e.attachPort);
-    if (!out) { toast('This part has no downstream connection', true); return; }
-    state.active = `${n.id}:${out}`;
-  }
-  state.selected = id;
-  draw(); renderProps(); renderStatus();
-  toast(`Pick a pipe or part to insert ${where} ${nodeLabel(n)}`);
+/** Add a plain pipe on the active end (open-ended, centre-to-end dimension). */
+function addPipe() {
+  const t = activeTarget();
+  if (!t || t.port.family === 'pipe') { toast('Pick an open end of a part first.', true); return; }
+  if (!(t.port.family === 'weld' || t.port.family === 'bspF')) { toast('That end takes a part, not a pipe.', true); return; }
+  commit(() => {
+    const spec = pipeFor(t.port);
+    const a = t.n.type === 'part' ? sideOf(t.n, t.port.name) : null;
+    const pipe = { id: newId(), type: 'pipe', ...spec, port: 'A', parent: t.nodeId, parentPort: t.port.name, roll: 0, dim: defaultDim(a, null) };
+    state.nodes.push(pipe);
+    state.active = `${pipe.id}:B`;
+    state.selected = pipe.id;
+  });
 }
 
 function removeSubtree(id) {
@@ -314,22 +355,16 @@ function removeSubtree(id) {
   state.nodes = state.nodes.filter((n) => !kill.has(n.id));
 }
 
-function deleteNode(id, rejoin = false) {
-  const n = nodeById(id);
+/** Delete a node and everything beyond it (a part also takes the pipe leading to it). */
+function deleteNode(id) {
+  let n = nodeById(id);
   if (!n) return;
   commit(() => {
-    const kids = childrenOf(id);
-    if (rejoin && kids.length === 1) {
-      const k = kids[0];
-      if (n.parent) { k.parent = n.parent; k.parentPort = n.parentPort; k.gap = n.gap || 0; }
-      else { delete k.parent; delete k.parentPort; k.startDir = n.startDir; k.origin = n.origin; }
-      state.nodes = state.nodes.filter((x) => x.id !== id);
-      state.active = null;
-    } else {
-      removeSubtree(id);
-      state.active = n.parent ? `${n.parent}:${n.parentPort}` : null;
-    }
-    state.selected = n.parent || null;
+    const up = nodeById(n.parent);
+    if (n.type === 'part' && up?.type === 'pipe' && childrenOf(up.id).length === 1) n = up; // its pipe goes too
+    removeSubtree(n.id);
+    state.active = n.parent ? `${n.parent}:${n.parentPort}` : null;
+    state.selected = null;
   });
 }
 
@@ -337,68 +372,75 @@ function rollNode(id, delta) {
   commit(() => { const n = nodeById(id); n.roll = (((Number(n.roll) || 0) + delta) % 360 + 540) % 360 - 180; });
 }
 
+/** Attach the part by its next end that fits the same joint. */
 function flipNode(id) {
   const n = nodeById(id);
-  const ports = portsOf(n);
-  if (!ports || ports.length < 2) return;
-  commit(() => setAttachPort(n, ports[(ports.findIndex((p) => p.name === n.port) + 1) % ports.length].name));
-}
-
-function setAttachPort(n, name) {
-  const old = n.port;
-  for (const c of childrenOf(n.id)) if (c.parentPort === name) c.parentPort = old;
-  n.port = name;
-}
-
-/** Change a pipe size and carry it along connected pipes of the same size. */
-function cascadeSize(n, newSize, stopAt = null) {
-  const old = n.size;
-  const seen = new Set(stopAt ? [stopAt] : []);
-  const walk = (node) => {
-    node.size = newSize;
-    seen.add(node.id);
-    const near = [...childrenOf(node.id), nodeById(node.parent)].filter(Boolean);
-    for (const c of near) if (!seen.has(c.id) && c.type === 'pipe' && c.size === old) walk(c);
-  };
-  walk(n);
-}
-
-function splitPipe(id, at) {
-  const n = nodeById(id);
-  const L = Number(n.length);
-  if (!(at > 0 && at < L)) { toast('Split distance must be inside the pipe', true); return; }
+  const part = partOf(n);
+  if (!part) return;
+  let opts;
+  if (n.parent) {
+    const target = localPorts(nodeById(n.parent))?.find((p) => p.name === n.parentPort);
+    opts = target ? joinOptions(target, part.ports).map((o) => o.port.name) : [];
+  } else opts = part.ports.map((p) => p.name); // the first part can start from any end
+  if (opts.length < 2) { toast('This part only fits one way round here.'); return; }
   commit(() => {
-    const b = { id: newId(), type: 'pipe', size: n.size, length: L - at, port: 'A', parent: n.id, parentPort: n.port === 'A' ? 'B' : 'A', roll: 0, gap: 0 };
-    for (const c of childrenOf(n.id)) c.parent = b.id;
-    n.length = at;
-    state.nodes.push(b);
-    state.active = `${n.id}:${b.parentPort}`;
-    state.selected = n.id;
+    const next = opts[(opts.indexOf(n.port) + 1) % opts.length];
+    for (const c of childrenOf(n.id)) if (c.parentPort === next) c.parentPort = n.port;
+    if (state.active === `${n.id}:${next}`) state.active = `${n.id}:${n.port}`;
+    n.port = next;
+  });
+}
+
+function setDim(id, mode, value) {
+  commit(() => {
+    const n = nodeById(id);
+    const v = Number(value);
+    if (!Number.isFinite(v) || v < 0) throw new Error('Enter a length in mm');
+    n.dim = { mode, value: v };
   });
 }
 
 // ------------------------------------------------------------------- panels
+let labelOd = new Map(); // size label -> OD, for sorting
+const sizeOrder = (label) => labelOd.get(label) || 0;
+
+function renderStartSizes() {
+  labelOd = new Map();
+  for (const p of library.parts.values()) for (const e of p.ports) if (!labelOd.has(e.label)) labelOd.set(e.label, e.od);
+  const labels = [...new Set(library.list().flatMap((p) => p.ports.map((e) => e.label)))].sort((a, b) => sizeOrder(a) - sizeOrder(b));
+  if (!labels.includes(state.startSize)) state.startSize = labels.find((l) => /50NB/.test(l)) || labels[0] || null;
+  $('selStart').innerHTML = labels.map((l) => `<option ${l === state.startSize ? 'selected' : ''}>${esc(l)}</option>`).join('');
+}
+
+const FAMILY_TEXT = { weld: 'weld end', bspF: 'BSP female', bspM: 'BSP male', rjtM: 'RJT male', rjtF: 'RJT female', flange: 'flange face', wafer: 'wafer face', pipe: 'pipe end' };
+
 function renderPartList() {
+  const empty = !state.nodes.length;
+  $('startSizeRow').hidden = !empty;
+  const t = empty ? null : activeTarget();
+  $('nextEnd').innerHTML = empty
+    ? '<span class="hint">Pick the first part. The orange end shows where the next one goes.</span>'
+    : t ? `Next on: <b>${esc(t.port.label || `Ø${t.port.od}`)}</b> ${esc(FAMILY_TEXT[t.port.family] || '')}`
+      : '<span class="hint">No open end selected – click a blue marker in the view.</span>';
   const q = $('partSearch').value.toLowerCase().trim();
-  const all = $('chkAllParts').checked;
   const words = q.split(/\s+/).filter(Boolean);
-  const list = library.list().filter((p) => (all || !p.configured || fitsType(p))
-    && words.every((w) => `${p.name} ${p.category} ${p.file}`.toLowerCase().includes(w)));
-  const item = (p) => {
-    const sz = [...new Set(p.ports.map((x) => odLabel(type(), x.od)))].join(' × ');
-    return p.configured
-      ? `<div class="item" data-part="${esc(p.id)}" title="${esc(p.id)}">${esc(p.name)}<span class="meta">${esc(sz)}</span></div>`
-      : `<div class="item disabled" data-setup="${esc(p.id)}" title="Ports not set up yet – click to set up">${esc(p.name)}<span class="meta"><span class="badge">set up</span></span></div>`;
-  };
-  let html = '';
-  const rec = recent.map((id) => library.parts.get(id)).filter((p) => p && list.includes(p));
-  if (rec.length && !q) html += `<div class="cat">Recent</div>${rec.map(item).join('')}`;
-  const cats = {};
-  for (const p of list) (cats[p.category] ||= []).push(p);
-  for (const [cat, ps] of Object.entries(cats).sort()) {
-    html += `<div class="cat">${esc(cat)}</div>${ps.sort((a, b) => a.name.localeCompare(b.name)).map(item).join('')}`;
+  const list = (empty || t) ? library.list().filter((p) => optionsFor(p).length
+    && words.every((w) => `${p.search || ''} ${p.name} ${p.id}`.toLowerCase().includes(w))) : [];
+  const groups = new Map();
+  for (const p of list) {
+    const g = p.system_name || p.system;
+    if (!groups.has(g)) groups.set(g, []);
+    groups.get(g).push(p);
   }
-  $('partList').innerHTML = html || `<p class="hint">${library.parts.size ? `No parts match${all ? '' : ` ${esc(type().name)} – tick “All”`}.` : 'Open your STEP library folder to see your fittings and valves.'}</p>`;
+  let html = '';
+  for (const [g, ps] of [...groups]) {
+    html += `<div class="cat">${esc(g)}</div>`;
+    for (const p of ps.sort((a, b) => (a.type_name || '').localeCompare(b.type_name || '') || (a.ports[0]?.od || 0) - (b.ports[0]?.od || 0) || a.id.localeCompare(b.id))) {
+      const via = !empty && optionsFor(p)[0].viaPipe ? '<span class="badge ok" title="Joined with a pipe">+ pipe</span>' : '';
+      html += `<div class="item" data-part="${esc(p.id)}" title="${esc(`${p.id} – ${p.description}`)}">${esc(p.type_name || p.type)}<span class="meta">${via} ${esc(p.size_label || '')}</span></div>`;
+    }
+  }
+  $('partList').innerHTML = html || `<p class="hint">${library.parts.size ? 'Nothing in the library fits here.' : 'Open your Part-Library folder to see parts.'}</p>`;
 }
 
 function renderTree() {
@@ -406,192 +448,220 @@ function renderTree() {
   let html = '';
   const walk = (parent, depth) => {
     for (const n of state.nodes.filter((x) => (x.parent || null) === parent)) {
-      const extra = n.type === 'pipe' ? `${n.size} · ${n.length}` : nodeSizeText(n);
+      const extra = n.type === 'pipe' ? `${round(n.cut)} mm` : (partOf(n)?.size_label || '');
+      const name = n.type === 'pipe' ? 'Pipe' : (partOf(n)?.type_name || n.part);
       const cls = ['item', n.id === state.selected ? 'sel' : '', errById.has(n.id) ? 'err' : ''].join(' ');
-      html += `<div class="${cls}" data-node="${n.id}" style="padding-left:${6 + depth * 12}px" title="${esc(errById.get(n.id) || '')}">`
-        + `${esc(n.tag ? `${n.tag} – ` : '')}${esc(nodeLabel(n))}<span class="meta">${esc(extra)}${n.roll ? ` ⟳${n.roll}°` : ''}</span></div>`;
+      html += `<div class="${cls}" data-node="${n.id}" style="padding-left:${6 + depth * 10}px" title="${esc(errById.get(n.id) || '')}">`
+        + `${esc(n.tag ? `${n.tag} – ` : '')}${esc(name)}<span class="meta">${esc(extra)}</span></div>`;
       walk(n.id, depth + 1);
     }
   };
   walk(null, 0);
-  $('tree').innerHTML = html || '<p class="hint">Empty spool. Add a pipe or pick a part from your library to start.</p>';
-}
-
-function sizeOptions(selected) {
-  return type().sizes.map((s) => `<option ${s.label === selected ? 'selected' : ''} value="${esc(s.label)}">${esc(s.label)} · Ø${s.od}×${s.wall}</option>`).join('');
+  $('tree').innerHTML = html || '<p class="hint">Empty. Pick a part on the left to start.</p>';
 }
 
 function renderProps() {
   const el = $('props');
   const n = nodeById(state.selected);
   if (!n) {
-    el.innerHTML = `<h3>Spool</h3><p class="hint">Click a component to edit it. Blue markers are open ends –
-      click one to make it the active (orange) end, then add a pipe or a library part there.
-      Select a component and use <b>Insert before</b> / <b>Insert after</b> to put something in between.</p>`;
+    el.innerHTML = `<h3>How to</h3><p class="hint">1. Pick a part on the left – it goes on the <b>orange</b> end.<br>
+      2. Select it to roll it (<kbd>R</kbd>) or turn it round (<kbd>X</kbd>).<br>
+      3. Click a pipe or its dimension to set the centre-to-centre.<br>
+      Click a blue marker to carry on from another open end.</p>`;
     return;
   }
-  const ports = portsOf(n) || [];
   const err = solved.errors.filter((e) => e.id === n.id).map((e) => esc(e.message)).join('<br>');
-  const isRoot = !n.parent;
-  const attach = solved.placed.get(n.id)?.attachPort;
-  const portRows = ports.map((p) => {
-    const key = `${n.id}:${p.name}`;
-    const isAttach = p.name === attach && !isRoot;
-    const child = state.nodes.find((c) => c.parent === n.id && c.parentPort === p.name);
-    const status = isAttach ? 'upstream' : child ? `→ ${esc(nodeLabel(child))}` : 'open';
-    const btn = isAttach ? '' : `<button data-activate="${key}" title="${child ? 'Insert a component here' : 'Add components here'}">${state.active === key ? '●' : child ? 'insert' : 'add'}</button>`;
-    return `<div class="item"><b>${esc(p.name)}</b> ${esc(odLabel(type(), p.od))} <span class="meta">${status}</span>${btn}</div>`;
-  }).join('');
-  const partOpts = n.type === 'part'
-    ? library.list().filter((p) => p.configured).sort((a, b) => a.name.localeCompare(b.name))
-      .map((p) => `<option value="${esc(p.id)}" ${p.id === n.part ? 'selected' : ''}>${esc(p.name)}</option>`).join('') : '';
-
+  if (n.type === 'pipe') {
+    const down = childAt(n.id, 'B');
+    const cc = n.dim?.mode === 'cc';
+    el.innerHTML = `
+      <h4>Pipe ${esc(n.label)}</h4>
+      <div class="hint">Ø${n.od} × ${n.wall} mm${n.threaded ? ', threaded' : ''}</div>
+      <div class="grid">
+        <span>Dimension</span>
+        <select id="propMode">
+          <option value="cc" ${cc ? 'selected' : ''}>${down ? 'Centre to centre' : 'Centre to end'}</option>
+          <option value="cut" ${cc ? '' : 'selected'}>Cut length</option>
+        </select>
+        <span>mm</span><input id="propDim" type="number" min="0" step="1" value="${round(n.dim?.value ?? n.cut)}">
+        <span>Cut length</span><b>${round(n.cut)} mm</b>
+      </div>
+      <div class="btns">
+        <button id="propClose" title="No pipe: the parts weld or screw straight together">Close-coupled</button>
+        <button id="propDel" class="danger" title="Delete this pipe and everything beyond it (Del)">Delete</button>
+      </div>
+      ${err ? `<div class="msg">${err}</div>` : ''}`;
+    const apply = () => setDim(n.id, $('propMode').value, $('propDim').value);
+    $('propDim').onchange = apply;
+    $('propDim').onkeydown = (e) => { if (e.key === 'Enter') apply(); };
+    $('propMode').onchange = () => {
+      const { a, b } = pipeSides(n);
+      const mode = $('propMode').value;
+      setDim(n.id, mode, round(dimFromCut(mode, Math.max(n.cut, 0), a, b)));
+    };
+    $('propClose').onclick = () => setDim(n.id, 'cut', 0);
+    $('propDel').onclick = () => deleteNode(n.id);
+    setTimeout(() => { const f = $('propDim'); if (f && document.activeElement === document.body) { f.focus(); f.select(); } }, 30);
+    return;
+  }
+  const p = partOf(n);
   el.innerHTML = `
     <h4>${esc(nodeLabel(n))}</h4>
-    <div class="btns top">
-      <button id="propBefore" title="Insert the next pipe or part before this one ([)">⇤ Insert before</button>
-      <button id="propAfter" title="Insert the next pipe or part after this one (])">Insert after ⇥</button>
-    </div>
+    <div class="hint">${esc(p?.id || n.part)} – ${esc(p?.description || '')}</div>
     <div class="grid">
       <span>Tag</span><input id="propTag" value="${esc(n.tag || '')}" placeholder="e.g. V-101">
-      ${n.type === 'part' ? `<span>Part</span><select id="propPart">${partOpts}</select>` : ''}
-      ${n.type === 'pipe' ? `<span>Size</span><select id="propSize">${sizeOptions(n.size)}</select>
-        <span>Length mm</span><input id="propLength" type="number" min="1" step="1" value="${n.length}">` : ''}
-      <span>Attach by</span><select id="propPort">${ports.map((p) => `<option ${p.name === n.port ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select>
-      <span>Roll °</span><div class="rollbtns"><input id="propRoll" type="number" step="15" value="${n.roll || 0}" style="width:60px">
-        <button data-roll="-90">−90</button><button data-roll="-45">−45</button><button data-roll="45">+45</button><button data-roll="90">+90</button></div>
-      ${isRoot ? `<span>Start dir</span><select id="propStart">${Object.keys(START_DIRS).map((d) => `<option ${d === (n.startDir || '+X') ? 'selected' : ''}>${d}</option>`).join('')}</select>`
-        : `<span>Gap mm</span><input id="propGap" type="number" step="0.5" value="${n.gap || 0}" title="Gasket / weld gap before this component">`}
+      <span>Roll</span><div class="rollbtns">
+        <button id="propRollM" title="Roll −90° (Shift+R)">⟲ 90°</button>
+        <button id="propRollP" title="Roll +90° (R)">⟳ 90°</button>
+        <input id="propRoll" type="number" step="15" value="${Number(n.roll) || 0}" aria-label="Roll angle in degrees">°
+      </div>
     </div>
-    <h3 style="margin-top:10px">Connections</h3>
-    <div class="list">${portRows}</div>
     <div class="btns">
-      <button id="propFlip" title="Attach by the next port (X)">Flip</button>
-      ${n.type === 'pipe' ? '<button id="propSplit" title="Split this pipe in two">Split…</button>' : ''}
-      ${childrenOf(n.id).length <= 1 && (n.parent || childrenOf(n.id).length) ? '<button id="propRejoin" title="Remove this component and join its neighbours">Remove &amp; rejoin</button>' : ''}
-      <button id="propDelete" class="danger" title="Delete this and everything downstream (Del)">Delete</button>
+      <button id="propFlip" title="Attach by its other end (X)">Turn round</button>
+      <button id="propDel" class="danger" title="Delete this part and everything beyond it (Del)">Delete</button>
     </div>
     ${err ? `<div class="msg">${err}</div>` : ''}`;
-
-  const on = (id, ev, fn) => { const x = $(id); if (x) x.addEventListener(ev, fn); };
-  on('propBefore', 'click', () => insertAt(n.id, 'before'));
-  on('propAfter', 'click', () => insertAt(n.id, 'after'));
-  on('propTag', 'change', (e) => commit(() => { n.tag = e.target.value.trim(); }));
-  on('propPart', 'change', (e) => commit(() => { n.part = e.target.value; }));
-  on('propSize', 'change', (e) => commit(() => cascadeSize(n, e.target.value)));
-  on('propLength', 'change', (e) => {
-    const v = parseFloat(e.target.value);
-    if (!(v > 0)) { toast('Length must be more than 0', true); return; }
-    state.lastPipeLength = v;
-    commit(() => { n.length = v; });
-  });
-  on('propLength', 'keydown', (e) => { if (e.key === 'Enter') e.target.blur(); });
-  on('propPort', 'change', (e) => commit(() => setAttachPort(n, e.target.value)));
-  on('propRoll', 'change', (e) => commit(() => { n.roll = parseFloat(e.target.value) || 0; }));
-  on('propStart', 'change', (e) => commit(() => { n.startDir = e.target.value; }));
-  on('propGap', 'change', (e) => commit(() => { n.gap = parseFloat(e.target.value) || 0; }));
-  on('propFlip', 'click', () => flipNode(n.id));
-  on('propDelete', 'click', () => deleteNode(n.id));
-  on('propRejoin', 'click', () => deleteNode(n.id, true));
-  on('propSplit', 'click', async () => {
-    const v = parseFloat(await ask('Split at distance from the upstream end (mm):', { input: String(Math.round(n.length / 2)), ok: 'Split' }));
-    if (v) splitPipe(n.id, v);
-  });
-  el.querySelectorAll('[data-roll]').forEach((b) => b.addEventListener('click', () => rollNode(n.id, Number(b.dataset.roll))));
-  el.querySelectorAll('[data-activate]').forEach((b) => b.addEventListener('click', () => { state.active = b.dataset.activate; draw(); renderProps(); renderStatus(); }));
+  $('propTag').onchange = (e) => commit(() => { n.tag = e.target.value.trim(); });
+  $('propRollM').onclick = () => rollNode(n.id, -90);
+  $('propRollP').onclick = () => rollNode(n.id, 90);
+  $('propRoll').onchange = (e) => commit(() => { n.roll = Number(e.target.value) || 0; });
+  $('propFlip').onclick = () => flipNode(n.id);
+  $('propDel').onclick = () => deleteNode(n.id);
 }
 
 function renderStatus() {
-  const box = new THREE.Box3();
-  viewer.content.children.forEach((c) => { if (c.isMesh) box.expandByObject(c); });
-  const out = [`${state.nodes.length} components`];
-  if (!box.isEmpty()) {
-    const s = box.getSize(new THREE.Vector3());
-    out.push(`overall ${Math.round(s.x)} × ${Math.round(s.y)} × ${Math.round(s.z)} mm`);
-  }
-  const t = activeTarget();
-  if (t) {
-    const child = childAt(state.active);
-    const where = child ? `insert between ${nodeLabel(nodeById(t.nodeId))} and ${nodeLabel(child)}` : `add at ${nodeLabel(nodeById(t.nodeId))} ${t.port.name}`;
-    out.push(`next: ${where} (${odLabel(type(), t.port.od)})`);
-  }
-  const errs = solved.errors.map((e) => `<span class="bad">⚠ ${esc(nodeLabel(nodeById(e.id)))}: ${esc(e.message)}</span>`);
-  $('status').innerHTML = [...out.map(esc), ...errs].join(' · ');
+  const errs = solved.errors;
+  const pipes = state.nodes.filter((n) => n.type === 'pipe');
+  const total = pipes.reduce((s, n) => s + Math.max(n.cut, 0), 0);
+  const count = state.nodes.length - pipes.length;
+  let html = `${count} part${count === 1 ? '' : 's'}, ${pipes.length} pipe${pipes.length === 1 ? '' : 's'} (${round(total / 1000, 2)} m)`;
+  if (errs.length) html += ` · <span class="bad">${esc(errs[0].message)}${errs.length > 1 ? ` (+${errs.length - 1} more)` : ''}</span>`;
+  $('status').innerHTML = html;
 }
 
-// -------------------------------------------------------------- BOM / export
+// -------------------------------------------------------------------- BOM
 function bom() {
-  const pipes = {};
-  const items = {};
+  const rows = new Map();
   for (const n of state.nodes) {
-    if (n.type === 'pipe') {
-      (pipes[n.size] ||= { total: 0, cuts: [] });
-      pipes[n.size].total += Number(n.length);
-      pipes[n.size].cuts.push(Number(n.length));
-    } else {
-      const key = n.part;
-      (items[key] ||= { desc: nodeLabel(n), size: nodeSizeText(n), qty: 0, tags: [] });
-      items[key].qty++;
-      if (n.tag) items[key].tags.push(n.tag);
+    if (n.type === 'part') {
+      const p = partOf(n);
+      const k = `part|${n.part}`;
+      if (!rows.has(k)) rows.set(k, { item: n.part, desc: p?.description || n.part, size: p?.size_label || '', qty: 0, tags: [] });
+      const r = rows.get(k);
+      r.qty++;
+      if (n.tag) r.tags.push(n.tag);
     }
   }
-  const rows = [];
-  for (const [size, p] of Object.entries(pipes)) {
-    rows.push({ desc: `Pipe ${type().name}`, size, qty: `${Math.round(p.total)} mm`, notes: `cuts: ${p.cuts.map((c) => Math.round(c * 10) / 10).join(', ')}` });
-  }
-  for (const it of Object.values(items).sort((a, b) => a.desc.localeCompare(b.desc))) rows.push({ desc: it.desc, size: it.size, qty: it.qty, notes: it.tags.join(', ') });
-  return rows;
+  const out = [...rows.values()].map((r) => ({ ...r, notes: r.tags.join(' ') }));
+  const pipes = state.nodes.filter((n) => n.type === 'pipe' && n.cut > 0);
+  for (const n of pipes) out.push({ item: 'Pipe', desc: `Pipe ${n.label} Ø${n.od}×${n.wall}${n.threaded ? ' threaded' : ''}`, size: n.label, qty: 1, notes: `cut ${round(n.cut)} mm` });
+  return out;
 }
 
 function showBom() {
-  $('bomBody').innerHTML = `<div class="scroll-x"><table class="bom"><tr><th>Description</th><th>Size</th><th>Qty</th><th>Notes</th></tr>${
-    bom().map((r) => `<tr><td>${esc(r.desc)}</td><td>${esc(r.size)}</td><td class="num">${esc(r.qty)}</td><td>${esc(r.notes)}</td></tr>`).join('')}</table></div>`;
+  const rows = bom();
+  $('bomBody').innerHTML = rows.length ? `<table class="bom"><tr><th>Item</th><th>Description</th><th>Size</th><th>Qty</th><th>Notes</th></tr>${rows.map((r) => `<tr><td>${esc(r.item)}</td><td>${esc(r.desc)}</td><td>${esc(r.size)}</td><td class="num">${r.qty}</td><td>${esc(r.notes)}</td></tr>`).join('')}</table>` : '<p class="hint">The spool is empty.</p>';
   $('dlgBom').showModal();
 }
 
 function spoolData() {
-  return { version: 2, name: state.name, pipeType: state.pipeType, defaultSize: state.defaultSize, nodes: state.nodes };
+  return { app: 'pipe-spool-tool', version: 2, name: state.name, startSize: state.startSize, nodes: state.nodes.map(({ cut, gap, ...n }) => n) };
+}
+
+// ----------------------------------------------------------------- export
+let expViewer = null;
+let built = null; // {sig, stats}
+
+function exportSettings() {
+  const level = document.querySelector('input[name=expLevel]:checked').value;
+  return { level, res: Number($('expRes').value), hollow: $('expHollow').checked };
+}
+
+function exportItems() {
+  const items = [];
+  for (const n of state.nodes) {
+    const e = solved.placed.get(n.id);
+    if (!e) continue;
+    if (n.type === 'pipe') {
+      if (n.cut > 0.01) items.push({ kind: 'pipe', od: n.od, id: n.od - 2 * n.wall, length: n.cut, matrix: e.matrix });
+    } else {
+      const p = partOf(n);
+      items.push({
+        kind: 'part', key: library.cacheKey(n.part), part: n.part, matrix: e.matrix, name: p.name,
+        geom: { ends: p.ports.map((q) => ({ o: q.origin, d: q.dir })), c: p.centre }, ods: p.ports.map((q) => q.od),
+      });
+    }
+  }
+  return items;
+}
+
+function syncExportForm() {
+  const { level, res } = exportSettings();
+  $('expResRow').hidden = level !== 'wrap';
+  $('expHollowRow').hidden = level !== 'full';
+  $('expResOut').textContent = `${res} mm`;
+  const stale = built && built.sig !== JSON.stringify({ ...exportSettings(), nodes: spoolData().nodes });
+  $('expGo').textContent = built && !stale ? 'Download STEP' : 'Build and download';
+  if (stale) $('expStats').textContent = 'Settings changed – build the preview again to see the result.';
 }
 
 async function exportStep() {
   if (!state.nodes.length) { toast('Nothing to export yet', true); return; }
-  if (solved.errors.some((e) => e.kind !== 'size')) {
-    if (!await ask('Some components could not be placed and will be left out. Export anyway?', { ok: 'Export' })) return;
-  } else if (solved.errors.length && !await ask('There are size mismatches in the spool. Export anyway?', { ok: 'Export' })) return;
+  if (solved.errors.length && !await ask(`${solved.errors[0].message}. Export anyway?`, { ok: 'Continue' })) return;
   $('expMsg').textContent = '';
+  built = null;
+  $('expStats').textContent = 'Build a preview to see the size of the file.';
   $('dlgExport').showModal();
+  if (!expViewer) expViewer = new Viewer($('expView'));
+  expViewer.clear();
+  expViewer.resize();
+  expViewer.render();
+  syncExportForm();
 }
 
-async function doExport() {
-  $('expGo').disabled = true;
+async function buildExport() {
   const msg = (t) => { $('expMsg').textContent = t; };
+  const settings = exportSettings();
+  const sig = JSON.stringify({ ...settings, nodes: spoolData().nodes });
+  if (built?.sig === sig) return built;
+  $('expBuild').disabled = $('expGo').disabled = true;
+  const t0 = performance.now();
   try {
     msg('Loading the CAD engine…');
     await startCad();
-    const items = [];
-    for (const n of state.nodes) {
-      const e = solved.placed.get(n.id);
-      if (!e) continue;
-      if (n.type === 'pipe') {
-        const s = pipeSize(n.size);
-        items.push({ kind: 'pipe', od: s.od, id: $('expHollow').checked ? s.od - 2 * s.wall : 0, length: Number(n.length), matrix: e.matrix });
-      } else {
-        msg(`Reading ${nodeLabel(n)}…`);
-        items.push({ kind: 'part', key: await parts.ensureKernel(n.part), matrix: e.matrix });
-      }
-    }
-    msg('Building the STEP file… (merging large manufacturer models can take a minute)');
-    const res = await cad.exportStep({ name: state.name, items, fuse: $('expFuse').checked });
-    const saved = await saveFile(`${state.name}.stp`, res.bytes, 'application/step');
-    if (!saved) { msg('Download cancelled.'); return; }
-    $('dlgExport').close();
-    if (res.warnings.length) toast(res.warnings.join(' '), true, 9000);
-    else toast(`Saved ${saved} – ${res.solids} solid body`);
+    const items = exportItems();
+    for (const it of items) if (it.kind === 'part') { msg(`Reading ${it.name}…`); await parts.ensureKernel(it.part); }
+    msg(settings.level === 'full' ? 'Merging the full models… (large valves can take a minute)' : 'Shrink-wrapping the parts…');
+    const res = await cad.build({ items, level: settings.level, res: settings.res, hollow: settings.hollow });
+    const { bytes } = await cad.writeStep({ name: state.name });
+    built = { sig, bytes, warnings: res.warnings };
+    expViewer.clear();
+    const g = geometryFromMesh(res.mesh);
+    g.userData.shared = false;
+    expViewer.content.add(new THREE.Mesh(g, material('fitting', false)));
+    expViewer.resize();
+    expViewer.fit();
+    $('expStats').innerHTML = `<b>${(bytes.length / 1024 / 1024).toFixed(2)} MB</b> · ${res.faces} faces · ${res.solids} solid${res.solids === 1 ? '' : 's'} · built in ${((performance.now() - t0) / 1000).toFixed(1)} s`;
+    msg(res.warnings.join(' '));
+    return built;
   } catch (e) {
     msg(`Export failed: ${e.message}`);
+    return null;
   } finally {
-    $('expGo').disabled = false;
+    $('expBuild').disabled = $('expGo').disabled = false;
+    syncExportForm();
   }
+}
+
+async function downloadExport() {
+  const b = await buildExport();
+  if (!b) return;
+  try {
+    const saved = await saveFile(`${state.name}.stp`, b.bytes, 'application/step');
+    if (!saved) { $('expMsg').textContent = 'Download cancelled.'; return; }
+    $('dlgExport').close();
+    toast(`Saved ${saved}`);
+  } catch (e) { $('expMsg').textContent = e.message; }
 }
 
 // ------------------------------------------------------------ save / open
@@ -605,16 +675,18 @@ function saveSpool() {
 }
 
 function loadSpool(data) {
+  if (data?.nodes?.length && data.version !== 2) { toast('That spool was made with the old version of the tool and can’t be opened.', true); return; }
   state.name = data.name || 'Spool';
   $('projectName').value = state.name;
-  state.pipeType = pipeType(data.pipeType).id;
-  state.defaultSize = data.defaultSize || type().sizes[0].label;
+  if (data.startSize) state.startSize = data.startSize;
   state.nodes = data.nodes || [];
   state.selected = null;
   state.active = null;
   undoStack.length = 0;
   redoStack.length = 0;
-  renderSpec();
+  const missing = state.nodes.filter((n) => n.type === 'part' && !library.parts.has(n.part));
+  if (missing.length) toast(`${missing.length} part${missing.length === 1 ? ' is' : 's are'} not in the open library – open your Part-Library folder.`, true, 7000);
+  renderStartSizes();
   needFit = true;
   rebuild();
 }
@@ -622,28 +694,21 @@ function loadSpool(data) {
 function showOpen() {
   const names = Object.keys(readSpools()).sort();
   $('projectList').innerHTML = names.length
-    ? names.map((n) => `<div class="item" data-proj="${esc(n)}">${esc(n)}<span class="meta"><button data-del="${esc(n)}" title="Delete">✕</button></span></div>`).join('')
+    ? names.map((n) => `<div class="item" data-proj="${esc(n)}">${esc(n)}<span class="meta"><button data-del="${esc(n)}" title="Delete" aria-label="Delete ${esc(n)}">✕</button></span></div>`).join('')
     : '<p class="hint">No spools saved in this browser yet.</p>';
   $('dlgOpen').showModal();
 }
 
-// ------------------------------------------------------------------- specs
-function renderSpec() {
-  $('selType').innerHTML = PIPE_TYPES.map((t) => `<option value="${t.id}" ${t.id === state.pipeType ? 'selected' : ''}>${esc(t.name)}</option>`).join('');
-  if (!pipeSize(state.defaultSize)) state.defaultSize = type().sizes[Math.min(4, type().sizes.length - 1)].label;
-  $('selSize').innerHTML = sizeOptions(state.defaultSize);
-}
-
+// ---------------------------------------------------------------- library
 async function renderLibraryBar() {
-  const name = library.folderName;
-  const remembered = name ? null : await library.rememberedName();
-  $('libFolder').innerHTML = name
-    ? `<b>${esc(name)}</b> <span class="hint">${library.writable ? 'port set-ups save into the folder' : 'port set-ups save in this browser'}</span>`
-    : remembered ? `<span class="hint">Last used: <b>${esc(remembered)}</b></span>` : '<span class="hint">Built-in samples only</span>';
+  const demo = library.source === 'demo';
+  const remembered = demo ? await library.rememberedName() : null;
+  $('libFolder').innerHTML = demo
+    ? `<b>Demo parts</b> <span class="hint">(${library.parts.size} parts, 50NB / 40NB Sch 10S)${remembered ? ` – last used: <b>${esc(remembered)}</b>` : ''}</span>`
+    : `<b>${esc(library.name)}</b> <span class="hint">${library.parts.size} parts</span>`;
   $('btnReconnect').hidden = !remembered;
 }
 
-// -------------------------------------------------------------------- events
 async function openLibrary() {
   if (library.canPickDirectory) {
     try { await library.pickDirectory(); } catch (e) { if (e.name !== 'AbortError') toast(e.message, true); return; }
@@ -654,49 +719,35 @@ async function openLibrary() {
 }
 
 function afterLibraryChange() {
+  meshes.clear();
   renderLibraryBar();
-  renderPartList();
-  libEditor.refresh();
-  const n = library.parts.size - library.list().filter((p) => p.id.startsWith('Samples/')).length;
-  toast(`Library loaded: ${n} STEP file${n === 1 ? '' : 's'}`);
+  renderStartSizes();
+  toast(`Library loaded: ${library.parts.size} parts`);
   rebuild();
 }
 
+// -------------------------------------------------------------------- events
 function wire() {
-  document.querySelectorAll('.tabs button').forEach((b) => b.addEventListener('click', () => {
-    document.querySelectorAll('.tabs button').forEach((x) => x.classList.toggle('active', x === b));
-    document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.id === `tab-${b.dataset.tab}`));
-    if (b.dataset.tab === 'library') libEditor.show(); else viewer.resize();
-  }));
   document.querySelectorAll('[data-view]').forEach((b) => b.addEventListener('click', () => viewer.setView(b.dataset.view)));
   $('btnFit').onclick = () => viewer.fit();
   $('btnUndo').onclick = undo;
   $('btnRedo').onclick = redo;
-  ['chkDims', 'chkTags', 'chkXray'].forEach((id) => { $(id).onchange = draw; });
-  $('selType').onchange = (e) => { state.pipeType = e.target.value; renderSpec(); rebuild(); };
-  $('selSize').onchange = (e) => { state.defaultSize = e.target.value; };
-  $('btnPipe').onclick = () => addComponent('pipe');
+  $('chkDims').onchange = draw;
+  $('selStart').onchange = (e) => { state.startSize = e.target.value; renderPartList(); };
   $('partSearch').oninput = renderPartList;
   $('partSearch').onkeydown = (e) => {
-    if (e.key === 'Enter') { const first = $('partList').querySelector('[data-part]'); if (first) { addComponent('part', { part: first.dataset.part }); e.target.blur(); } }
+    if (e.key === 'Enter') { const first = $('partList').querySelector('[data-part]'); if (first) { addPart(first.dataset.part); e.target.blur(); } }
     if (e.key === 'Escape') e.target.blur();
   };
-  $('chkAllParts').onchange = renderPartList;
-  $('partList').onclick = (e) => {
-    const it = e.target.closest('[data-part]');
-    if (it) { addComponent('part', { part: it.dataset.part }); return; }
-    const su = e.target.closest('[data-setup]');
-    if (su) { document.querySelector('.tabs [data-tab=library]').click(); libEditor.select(su.dataset.setup); }
-  };
+  $('partList').onclick = (e) => { const it = e.target.closest('[data-part]'); if (it) addPart(it.dataset.part); };
   $('btnOpenLib').onclick = openLibrary;
   $('btnReconnect').onclick = async () => {
     try { if (await library.reconnect(true) === true) afterLibraryChange(); else toast('Permission was not given', true); } catch (e) { toast(e.message, true); }
   };
   $('libInput').onchange = async (e) => {
     if (!e.target.files.length) return;
-    await library.loadFileList(e.target.files);
+    try { await library.loadFileList(e.target.files); afterLibraryChange(); } catch (err) { toast(err.message, true); }
     e.target.value = '';
-    afterLibraryChange();
   };
   $('tree').onclick = (e) => {
     const it = e.target.closest('[data-node]');
@@ -704,10 +755,17 @@ function wire() {
     state.selected = it.dataset.node;
     draw(); renderTree(); renderProps();
   };
+  $('viewport').addEventListener('click', (e) => {
+    const lbl = e.target.closest('.dim-label[data-node]');
+    if (!lbl) return;
+    state.selected = lbl.dataset.node;
+    draw(); renderTree(); renderProps();
+    setTimeout(() => { const f = $('propDim'); if (f) { f.focus(); f.select(); } }, 30);
+  });
   $('projectName').onchange = (e) => { state.name = e.target.value.trim() || 'Spool'; };
   $('btnNew').onclick = async () => {
     if (state.nodes.length && !await ask('Start a new spool? Unsaved changes are lost.', { ok: 'New spool' })) return;
-    loadSpool({ name: 'Spool-01', pipeType: state.pipeType, defaultSize: state.defaultSize, nodes: [] });
+    loadSpool({ version: 2, name: 'Spool-01', startSize: state.startSize, nodes: [] });
   };
   $('btnSave').onclick = saveSpool;
   $('btnOpen').onclick = showOpen;
@@ -736,11 +794,15 @@ function wire() {
   $('btnBom').onclick = showBom;
   $('bomCsv').onclick = async () => {
     const q = (v) => `"${String(v).replace(/"/g, '""')}"`;
-    const csv = ['Description,Size,Qty,Notes', ...bom().map((r) => [r.desc, r.size, r.qty, r.notes].map(q).join(','))].join('\r\n');
+    const csv = ['Item,Description,Size,Qty,Notes', ...bom().map((r) => [r.item, r.desc, r.size, r.qty, r.notes].map(q).join(','))].join('\r\n');
     try { await saveFile(`${state.name}-BOM.csv`, csv, 'text/csv'); } catch (err) { toast(err.message, true); }
   };
   $('btnExport').onclick = exportStep;
-  $('expGo').onclick = doExport;
+  $('expBuild').onclick = buildExport;
+  $('expGo').onclick = downloadExport;
+  document.querySelectorAll('input[name=expLevel]').forEach((r) => { r.onchange = syncExportForm; });
+  $('expRes').oninput = syncExportForm;
+  $('expHollow').onchange = syncExportForm;
   document.querySelectorAll('dialog [data-close]').forEach((b) => b.addEventListener('click', () => b.closest('dialog').close()));
 
   let down = null;
@@ -757,11 +819,11 @@ function wire() {
       const h = hits.find((x) => x.object.userData.nodeId);
       state.selected = h ? h.object.userData.nodeId : null;
     }
-    draw(); renderTree(); renderProps(); renderStatus();
+    draw(); renderTree(); renderProps(); renderStatus(); renderPartList();
   });
 
   document.addEventListener('keydown', (e) => {
-    if (!$('tab-builder').classList.contains('active') || document.querySelector('dialog[open]')) return;
+    if (document.querySelector('dialog[open]')) return;
     const tag = e.target.tagName;
     if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
     const k = e.key.toLowerCase();
@@ -770,46 +832,34 @@ function wire() {
       if (k === 'z') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); } else if (k === 'y') { e.preventDefault(); redo(); } else if (k === 's') { e.preventDefault(); saveSpool(); }
       return;
     }
-    if (k === 'p') addComponent('pipe');
-    else if (k === '/' || k === 'f') { e.preventDefault(); $('partSearch').focus(); $('partSearch').select(); }
-    else if (k === '[' && sel) insertAt(sel, 'before');
-    else if (k === ']' && sel) insertAt(sel, 'after');
+    if (k === '/' || k === 'f') { e.preventDefault(); $('partSearch').focus(); $('partSearch').select(); }
+    else if (k === 'p') addPipe();
     else if (k === 'r' && sel) rollNode(sel, e.shiftKey ? -90 : 90);
     else if (k === 'x' && sel) flipNode(sel);
     else if ((k === 'delete' || k === 'backspace') && sel) { e.preventDefault(); deleteNode(sel); }
     else if (k === 'n' && open.length) {
       const keys = open.map((o) => `${o.nodeId}:${o.port.name}`);
       state.active = keys[(keys.indexOf(state.active) + 1) % keys.length];
-      draw(); renderProps(); renderStatus();
+      draw(); renderPartList();
     } else if (k === 'home') viewer.fit();
     else if (k === 'escape') { state.selected = null; draw(); renderTree(); renderProps(); }
   });
 }
 
 // ---------------------------------------------------------------------- init
-const libEditor = new LibraryEditor({
-  library,
-  parts,
-  getType: type,
-  onSaved: () => { renderPartList(); rebuild(); },
-  openLibrary,
-});
-
 function showEngineProgress(done, total) {
   const el = $('engine');
   if (total) el.textContent = `Loading CAD engine… ${Math.round(done / 1e6)} / ${Math.round(total / 1e6)} MB`;
 }
 
 async function init() {
-  try { recent = JSON.parse(localStorage.getItem('pipe-spool-tool.recent')) || []; } catch { recent = []; }
-  library.addSamples(window.SPOOL_SAMPLES || {});
-  renderSpec();
+  library.loadDemo(window.SPOOL_DEMO || { library: { parts: {} }, geometry: { parts: {} }, files: {} });
   wire();
+  try { if (await library.reconnect(false) === true) meshes.clear(); } catch { /* needs a click */ }
   renderLibraryBar();
-  try { if (await library.reconnect(false) === true) renderLibraryBar(); } catch { /* needs a click */ }
-  renderPartList();
+  renderStartSizes();
   const last = await kvGet('lastSpool');
-  if (last?.nodes?.length) loadSpool(last); else rebuild();
+  if (last?.nodes?.length && last.version === 2) loadSpool(last); else rebuild();
   $('engine').hidden = false;
   startCad(showEngineProgress)
     .then(() => { $('engine').hidden = true; })

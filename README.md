@@ -1,8 +1,9 @@
 # Pipe Spool Tool
 
-Lay out valve stations and pipe spools in an isometric 3D view, using the STEP fittings and valves
-from your own library, then save the whole assembly as **one STEP file**. That file imports into a
-Revit family as a single body.
+Build pipe spools in an isometric 3D view from the parts in your
+[Part-Library](https://github.com/Ryan1234abcd/Part-Library), set the centre-to-centre dimensions, and
+save the whole spool as **one STEP file**, shrink-wrapped so it stays small. That file imports into
+a Revit family as a single body.
 
 **It runs entirely in your web browser. There is nothing to install.**
 
@@ -13,55 +14,57 @@ Revit family as a single body.
 1. Open **`pipe-spool-tool.html`** (double-click it). Chrome or Edge is recommended.
 2. The first time, the page downloads the 23 MB OpenCascade CAD engine from a public CDN
    (jsDelivr, with unpkg as a fallback). The browser caches it after that.
-3. Click **Open folder…** and choose your STEP library folder. Sub-folders become categories.
-   In Chrome/Edge the page remembers the folder; next time click **Reconnect**.
+3. Click **Open Part-Library…** and choose your copy of the Part-Library folder (the one with
+   `library.json`, `geometry.json` and `models/`). In Chrome/Edge the page remembers it; next time
+   click **Reconnect**.
 
-Built-in sample parts (EN 10255 elbows, tees, reducer, flange, cap and a few valves) are always
-available to try it out.
+A few 50NB / 40NB Sch 10S parts, a butterfly valve and a wafer check valve are built in, so you can
+try it before opening the library.
 
-## Pipe types
+## Build a spool
 
-Steel · medium (EN 10255) · Copper · Table X (EN 1057) · PE-X / PE-RT · SDR 7.4 ·
-Stainless press-fit (EN 10312) · Stainless Sch 10S (ASTM A312) · Stainless Sch 40S (ASTM A312) ·
-Dairy tube (AS 1528.1)
+1. **Pick the first part.** Choose the start size, then click a part in the list.
+2. **Carry on from the orange end.** The list only shows parts that fit that end: the same pipe size
+   and a connection that mates with it. Weld ends and BSP female ends are joined with a pipe (marked
+   **+ pipe**); BSP male into female, RJT, and flange to flange or wafer valve go straight together.
+   Click any blue marker to carry on from another open end.
+3. **Rotate.** Select a part and roll it with **⟳ 90°** / **⟲ 90°** (`R` / `Shift+R`) or type an
+   angle. **Turn round** (`X`) attaches it by its other end.
+4. **Dimension.** Click a pipe, or its dimension in the view, and type the **centre-to-centre**
+   (fitting centre to fitting centre; to the pipe end when nothing is beyond it). The pipe's cut
+   length is worked out from each fitting's centre-to-end. You can switch a pipe to a plain
+   **cut length**, or make it **close-coupled** (no pipe, fittings welded straight together).
 
-Pipes are generated at the length you type. Fittings and valves are matched to a pipe by OD, so the
-part list shows the parts that fit the selected pipe type. Tick **All** to see everything. The
-OD × wall tables are in `web/js/pipe-types.js`; check them against your suppliers.
+Fitting centres: where the centrelines cross (elbows, tees), midway between the ends (valves,
+reducers), the flange face (flanges) or the end (caps). A pipe screwed into a BSP female end goes in
+by the thread engagement, and the cut length allows for it.
 
-## 1. Set up a STEP part (once per part)
+**Save** / **Open** keep spools in this browser; the open dialog also imports and downloads `.json`.
+The current spool is kept automatically. **BOM** gives a parts list and pipe cut list (CSV).
 
-Go to **Library setup** and pick a part. The page finds the circular end faces (pipe ends, weld ends,
-press-socket stops, flange faces) and suggests them as green arrows, with the pipe size guessed from
-the diameters. Untick anything that isn't a real connection (handwheels, strainer caps), check the
-pipe size and type, flip an arrow with ⇄ if it points inwards, then **Save part**.
+| Key | |
+|---|---|
+| `F` or `/` | search parts, Enter adds the first match |
+| `R` / `Shift+R` | roll the selected part ±90° |
+| `X` | turn the selected part round |
+| `P` | plain pipe on the orange end |
+| `N` | next open end |
+| `Del` | delete the selected item and everything beyond it |
+| `Ctrl+Z` / `Ctrl+Y` | undo / redo |
 
-* In Chrome/Edge, the set-up is written next to the STEP file as `<part>.stp.json`.
-  It stays with your library, so other people using the same folder get it too.
-* In other browsers, it's kept in this browser. **Download set-up file** gives you the
-  `.stp.json` to put next to the STEP file yourself.
+## Export STEP
 
-## 2. Build the spool
+Everything is built in your browser and merged into one solid. Choose the level of detail:
 
-* **Add pipe** (`P`) and type the length. Click a part in the list to add it at the **orange** end.
-  The next free end becomes orange, so you can chain parts quickly.
-  Press `F`, type part of a name, then Enter to add the first match.
-* Click any blue marker to continue from another open end.
-* **Insert before / Insert after** (`[` / `]`): select a component, press one, then pick a pipe or part.
-  It goes in between, and the existing run reconnects to it. A pipe that ends up on the far side of an
-  inserted reducer takes the reducer's size.
-* Select a component to roll it about the pipe axis (`R` / `Shift+R` = ±90°), flip it (`X`), set a
-  gap, add a tag (e.g. `V-101`), change its size, split a pipe, or remove it and rejoin the run.
-* Iso views from four quadrants plus top, front and right views. Dimensions and tags are drawn in the view.
-* **Save** / **Open** keep spools in this browser, and the open dialog also imports and downloads
-  `.json`. The current spool is also kept automatically. **BOM** gives a parts list and pipe cut list (CSV).
+| Level | What you get | Typical size |
+|---|---|---|
+| **Envelope** | each part replaced by a smooth outline (spun round its pipe line, rings for bends) and a block for each handle or bonnet | smallest |
+| **Shrink-wrap** | the outline follows each part at the **resolution** you set (1–50 mm); handles become a few blocks | small |
+| **Full model** | the original manufacturer geometry | largest |
 
-## 3. Export STEP
-
-**Export STEP** builds the exact geometry in your browser: real B-rep from your STEP files, plus
-pipes generated at the right OD and wall. By default everything is merged into **one solid**, and
-the page downloads `<spool name>.stp` in millimetres. The spool's start point is the origin.
-If a manufacturer model can't be merged, the file still holds every part, as separate bodies.
+Shrink-wrapped parts are solid (bores, threads and text are gone) and always enclose the real part.
+**Build preview** shows the result, its face count and file size before you download it. Pipes are
+solid unless you tick **Hollow pipes** on the full model.
 
 ## Develop
 
@@ -74,12 +77,16 @@ npm test             # node tests using the same CAD engine
 | Path | Contents |
 | --- | --- |
 | `web/js/app.js` | spool builder UI |
-| `web/js/kinematics.js` | port-to-port placement |
-| `web/js/library.js` | library folder access, set-up storage |
-| `web/js/library-editor.js`, `detect.js` | part set-up and automatic connection detection |
+| `web/js/joints.js` | which ends fit together, pipe sizes, cut length from dimensions |
+| `web/js/kinematics.js` | end-to-end placement |
+| `web/js/wrap.js` | shrink-wrap: simple solids that enclose a part |
+| `web/js/library.js` | reads Part-Library (`library.json` + `geometry.json`) |
 | `web/js/cad.js`, `cad-worker.js`, `cad-client.js` | OpenCascade (WebAssembly) in a Web Worker |
-| `web/js/pipe-types.js` | pipe types and sizes |
-| `library/Samples/` | sample STEP parts built into the page |
+| `scripts/library-geometry.mjs`, `scripts/ends.mjs` | find each part's ends in its STEP model → Part-Library `geometry.json` |
+| `scripts/make-demo.mjs` | copy the built-in demo parts from Part-Library into `library/Demo/` |
+
+After adding parts to Part-Library, run `node scripts/library-geometry.mjs ../Part-Library <ids…>`
+and commit the updated `geometry.json` there.
 
 `node scripts/build.mjs --hosted DIR` also writes a copy for a web server, with the CAD kernel split
 into `DIR/oc/` so it loads from the same site instead of the CDN.

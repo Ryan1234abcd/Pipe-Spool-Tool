@@ -23,18 +23,17 @@ const APP_MODULES = [
   [path.join(THREE_ADDONS, 'controls/OrbitControls.js'), 'three/addons/OrbitControls.js'],
   [path.join(THREE_ADDONS, 'renderers/CSS2DRenderer.js'), 'three/addons/CSS2DRenderer.js'],
   ['js/kinematics.js', './kinematics.js'],
-  ['js/pipe-types.js', './pipe-types.js'],
-  ['js/detect.js', './detect.js'],
+  ['js/joints.js', './joints.js'],
   ['js/ui.js', './ui.js'],
   ['js/library.js', './library.js'],
   ['js/cad-client.js', './cad-client.js'],
   ['js/viewer.js', './viewer.js'],
   ['js/parts.js', './parts.js'],
-  ['js/library-editor.js', './library-editor.js'],
   ['js/app.js', './app.js'],
 ];
 const WORKER_MODULES = [
   ['js/cad.js', './cad.js'],
+  ['js/wrap.js', './wrap.js'],
   ['js/cad-worker.js', './cad-worker.js'],
 ];
 
@@ -71,24 +70,14 @@ function workerSource() {
   return `${glue}\n;${bundle(WORKER_MODULES)}`;
 }
 
-function samples() {
-  const base = path.join(ROOT, 'library', 'Samples');
-  const out = {};
-  const walk = (dir) => {
-    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-      const p = path.join(dir, e.name);
-      if (e.isDirectory()) walk(p);
-      else if (/\.(stp|step)$/i.test(e.name)) {
-        const side = `${p}.json`;
-        out[path.relative(base, p).split(path.sep).join('/')] = {
-          step: read(p),
-          meta: fs.existsSync(side) ? JSON.parse(read(side)) : null,
-        };
-      }
-    }
-  };
-  walk(base);
-  return out;
+/** The demo parts in library/Demo (made by scripts/make-demo.mjs). */
+function demo() {
+  const base = path.join(ROOT, 'library', 'Demo');
+  const library = JSON.parse(read(path.join(base, 'library.json')));
+  const geometry = JSON.parse(read(path.join(base, 'geometry.json')));
+  const files = {};
+  for (const p of Object.values(library.parts)) files[p.files.step] = read(path.join(base, p.files.step));
+  return { library, geometry, files };
 }
 
 const safe = (s) => s.replace(/<\/script/gi, '<\\/script');
@@ -102,7 +91,7 @@ function build() {
   const body = html.match(/<body>(.*)<\/body>/s)[1];
   const scripts = [
     `<script>${safe(three)}</script>`,
-    `<script>window.SPOOL_SAMPLES = ${safe(JSON.stringify(samples()))};\nwindow.CAD_WORKER_SRC = ${safe(JSON.stringify(workerSource()))};</script>`,
+    `<script>window.SPOOL_DEMO = ${safe(JSON.stringify(demo()))};\nwindow.CAD_WORKER_SRC = ${safe(JSON.stringify(workerSource()))};</script>`,
     `<script>\n${safe(bundle(APP_MODULES))}</script>`,
   ].join('\n');
   const head = `${title}\n${icon}\n<style>\n${css}\n</style>\n`;

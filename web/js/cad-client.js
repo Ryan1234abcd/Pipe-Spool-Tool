@@ -87,8 +87,11 @@ export function startCad(onProgress) {
 }
 
 export const cad = {
-  /** Read STEP bytes; returns {mesh, circles}. The shape stays in the worker under `key`. */
+  /** Read STEP bytes; returns {mesh}. The shape stays in the worker under `key`. */
   load: async (key, bytes) => { await startCad(); const b = bytes.slice(); return call('load', { key, bytes: b }, [b.buffer]); },
   has: async (key) => { await startCad(); return call('has', { key }); },
-  exportStep: async (payload) => { await startCad(); return call('export', payload); },
+  /** Build the spool at a level of detail; returns {faces, solids, warnings, mesh}. */
+  build: async (payload) => { await startCad(); return call('build', payload); },
+  /** STEP bytes of the last build. */
+  writeStep: async (payload) => { await startCad(); return call('writeStep', payload); },
 };

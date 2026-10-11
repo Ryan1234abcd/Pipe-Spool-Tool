@@ -59,9 +59,6 @@ header {
   background: var(--chrome); color: var(--on-chrome);
 }
 .brand { font-weight: 600; font-size: 15px; }
-.tabs { display: flex; gap: 2px; }
-.tabs button { background: transparent; color: var(--on-chrome-muted); border: none; padding: 6px 12px; border-radius: 4px; }
-.tabs button.active { background: var(--chrome-2); color: var(--on-chrome); }
 .project { margin-left: auto; display: flex; gap: 6px; align-items: center; }
 .project input { width: 160px; }
 
@@ -86,15 +83,12 @@ main { flex: 1; min-height: 0; }
 
 aside { width: 260px; display: flex; flex-direction: column; gap: 6px; padding: 6px; overflow: hidden; }
 aside.right { width: 290px; }
-aside.right.wide { width: 420px; }
 .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 8px; }
 .panel.grow { flex: 1; min-height: 0; overflow: auto; }
 .panel h3 { margin: 0 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
 .hint { color: var(--muted); font-size: 11px; font-weight: normal; text-transform: none; letter-spacing: 0; }
 
-.palette { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
-.palette button { text-align: left; display: flex; justify-content: space-between; }
-.palette kbd, kbd { color: var(--muted); font-size: 10px; border: 1px solid var(--border); border-radius: 3px; padding: 0 3px; background: var(--btn); }
+kbd { color: var(--muted); font-size: 10px; border: 1px solid var(--border); border-radius: 3px; padding: 0 3px; background: var(--btn); }
 
 .list { display: flex; flex-direction: column; gap: 1px; margin-top: 4px; }
 .list .item { padding: 4px 6px; border-radius: 4px; cursor: pointer; display: flex; gap: 6px; align-items: center; }
@@ -132,17 +126,7 @@ aside.right.wide { width: 420px; }
 #props .list .item button { padding: 0 6px; margin-left: 4px; }
 #props .msg { color: var(--bad); margin-top: 6px; }
 
-.help table { border-collapse: collapse; width: 100%; font-size: 11px; }
-.help td { padding: 1px 4px; border-bottom: 1px solid var(--line); }
-.help td:first-child { white-space: nowrap; font-weight: 600; }
 
-table.ports { width: 100%; border-collapse: collapse; font-size: 12px; }
-table.ports th { text-align: left; color: var(--muted); font-weight: normal; font-size: 11px; }
-table.ports td, table.ports th { padding: 2px 3px; border-bottom: 1px solid var(--line); }
-table.ports input[type=text] { width: 36px; }
-table.ports select { max-width: 80px; }
-table.ports tr.sel { background: var(--sel-warm); }
-table.ports .xyz { font-size: 10px; color: var(--muted); white-space: nowrap; }
 
 .file-btn { display: inline-block; padding: 4px 10px; border: 1px solid var(--border); border-radius: 4px; background: var(--btn); cursor: pointer; }
 .file-btn input { display: none; }
@@ -176,8 +160,7 @@ code { font-size: 12px; }
   .project { margin-left: 0; flex-wrap: wrap; }
   .project input { width: 100%; max-width: 220px; }
   .tab.active { flex-direction: column; height: auto; padding-inline: 10px; }
-  aside, aside.right, aside.right.wide { width: 100%; overflow: visible; padding: 0; }
-  .panel.grow { max-height: 50vh; }
+  aside, aside.right,   .panel.grow { max-height: 50vh; }
   .viewport-wrap { min-height: 60vh; }
   .viewport { min-height: 55vh; }
   dialog { min-width: 0; width: calc(100vw - 32px); }
@@ -193,3 +176,22 @@ label.inline { display: inline-flex; gap: 3px; align-items: center; margin: 0; w
 #props .btns.top { margin: 0 0 8px; }
 #props .btns.top button { flex: 1; }
 .scroll-x { overflow-x: auto; }
+
+/* builder: next-end line, start size, search */
+.next-end { margin-bottom: 6px; }
+.inline-row { display: flex; align-items: center; gap: 6px; margin: 0 0 6px; }
+.inline-row select { flex: 1; margin: 0; }
+input.search { width: 100%; }
+.dim-label { pointer-events: auto; cursor: pointer; }
+.dim-label.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+#props .grid > b { font-variant-numeric: tabular-nums; }
+
+/* export dialog */
+dialog.export { width: 560px; }
+.levels label { margin: 6px 0; }
+.res-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
+.res-row input[type=range] { flex: 1; min-width: 140px; }
+.res-row output { font-variant-numeric: tabular-nums; min-width: 44px; }
+.export-preview { margin-top: 8px; }
+.export-preview .viewport { height: 260px; flex: none; }
+#expStats { margin-top: 4px; min-height: 16px; }

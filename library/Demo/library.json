@@ -1,0 +1,922 @@
+{
+ "name": "TMC Pipe Fitting Library (demo subset)",
+ "systems": [
+  {
+   "system": "pipe-sch10s",
+   "name": "Pipe – Schedule 10S butt-weld",
+   "size_basis": "NB (DN) pipe, ASME B36.19M OD",
+   "notes": "ASME B16.9 butt-weld fittings, ASTM A403 316L, plus AS2129 Table E slip-on plate flanges.",
+   "folder": "models/pipe-sch10s",
+   "types": [
+    {
+     "type": "pipe-elbow-90",
+     "name": "90° Elbow (long radius)",
+     "category": "elbow",
+     "folder": "models/pipe-sch10s/elbow-90-lr",
+     "count": 16,
+     "parts": [
+      "SPB4090S10",
+      "SPB5090S10"
+     ]
+    },
+    {
+     "type": "pipe-elbow-45",
+     "name": "45° Elbow (long radius)",
+     "category": "elbow",
+     "folder": "models/pipe-sch10s/elbow-45-lr",
+     "count": 16,
+     "parts": [
+      "SPB5045S10"
+     ]
+    },
+    {
+     "type": "pipe-tee-equal",
+     "name": "Equal Tee",
+     "category": "tee",
+     "folder": "models/pipe-sch10s/tee-equal",
+     "count": 16,
+     "parts": [
+      "SPET40S10",
+      "SPET50S10"
+     ]
+    },
+    {
+     "type": "pipe-tee-reducing",
+     "name": "Reducing Tee",
+     "category": "tee",
+     "folder": "models/pipe-sch10s/tee-reducing",
+     "count": 34,
+     "parts": [
+      "SPRT5040S10"
+     ]
+    },
+    {
+     "type": "pipe-reducer-concentric",
+     "name": "Concentric Reducer",
+     "category": "reducer",
+     "folder": "models/pipe-sch10s/reducer-concentric",
+     "count": 39,
+     "parts": [
+      "SPCR5040S10"
+     ]
+    },
+    {
+     "type": "pipe-cap",
+     "name": "End Cap",
+     "category": "cap",
+     "folder": "models/pipe-sch10s/cap",
+     "count": 16,
+     "parts": [
+      "SPEC40S10",
+      "SPEC50S10"
+     ]
+    },
+    {
+     "type": "pipe-flange-e",
+     "name": "Slip-on Plate Flange Table E",
+     "category": "flange",
+     "folder": "models/pipe-sch10s/flange-table-e",
+     "count": 16,
+     "parts": [
+      "SPF40E",
+      "SPF50E"
+     ]
+    }
+   ]
+  },
+  {
+   "system": "valves",
+   "name": "Valves & strainers",
+   "size_basis": "NB (DN)",
+   "notes": "Threaded BSP stainless valves, cast iron flanged/wafer valves, and one third-party flanged strainer.",
+   "folder": "models/valves",
+   "types": [
+    {
+     "type": "butterfly-lugged",
+     "name": "Butterfly Valve – lugged, cast iron",
+     "category": "valve",
+     "folder": "models/valves/butterfly-valve-lugged",
+     "count": 9,
+     "parts": [
+      "CILBV50DE"
+     ]
+    },
+    {
+     "type": "check-wafer",
+     "name": "Wafer Check Valve – cast iron",
+     "category": "valve",
+     "folder": "models/valves/check-valve-wafer",
+     "count": 8,
+     "parts": [
+      "CIWCV50"
+     ]
+    }
+   ]
+  }
+ ],
+ "parts": {
+  "SPB5090S10": {
+   "part_number": "SPB5090S10",
+   "supplier": "The Metal Company",
+   "description": "50NB Stainless Steel Pipe Bend 90 Deg Schedule 10S ASME B16.9 ASTM A403 316L",
+   "system": "pipe-sch10s",
+   "system_name": "Pipe – Schedule 10S butt-weld",
+   "category": "elbow",
+   "type": "pipe-elbow-90",
+   "type_name": "90° Elbow (long radius)",
+   "size_label": "50NB",
+   "ends": [
+    {
+     "code": 50,
+     "label": "50NB",
+     "dn": "DN50",
+     "inch": "2\"",
+     "standard": "ASME B36.19M",
+     "od_mm": 60.3,
+     "wall_mm": 2.77,
+     "schedule": "10S",
+     "end": "butt-weld"
+    },
+    {
+     "code": 50,
+     "label": "50NB",
+     "dn": "DN50",
+     "inch": "2\"",
+     "standard": "ASME B36.19M",
+     "od_mm": 60.3,
+     "wall_mm": 2.77,
+     "schedule": "10S",
+     "end": "butt-weld"
+    }
+   ],
+   "material": "316L",
+   "angle": 90,
+   "radius": "LR 1.5D",
+   "standards": [
+    "ASME B16.9",
+    "ASTM A403"
+   ],
+   "files": {
+    "step": "models/pipe-sch10s/elbow-90-lr/TMC_SPB5090S10_V1.step"
+   },
+   "model_version": 1,
+   "source": {
+    "original_path": "Pipe Fittings/Pipe Fittings Schedule 10/90 Elbow/TMC_SPB5090S10_V1.step"
+   },
+   "links": {
+    "category": "https://www.themetalcompany.co.nz/shop/pipe-fittings",
+    "search": "https://www.themetalcompany.co.nz/search/?query=SPB5090S10"
+   },
+   "search": "spb5090s10 90° elbow (long radius) pipe – schedule 10s butt-weld 50nb 316l 2\" dn50 60.3 90 deg",
+   "connects": [
+    "50NB"
+   ]
+  },
+  "SPB5045S10": {
+   "part_number": "SPB5045S10",
+   "supplier": "The Metal Company",
+   "description": "50NB Stainless Steel Pipe Bend 45 Deg Schedule 10S ASME B16.9 ASTM A403 316L",
+   "system": "pipe-sch10s",
+   "system_name": "Pipe – Schedule 10S butt-weld",
+   "category": "elbow",
+   "type": "pipe-elbow-45",
+   "type_name": "45° Elbow (long radius)",
+   "size_label": "50NB",
+   "ends": [
+    {
+     "code": 50,
+     "label": "50NB",
+     "dn": "DN50",
+     "inch": "2\"",
+     "standard": "ASME B36.19M",
+     "od_mm": 60.3,
+     "wall_mm": 2.77,
+     "schedule": "10S",
+     "end": "butt-weld"
+    },
+    {
+     "code": 50,
+     "label": "50NB",
+     "dn": "DN50",
+     "inch": "2\"",
+     "standard": "ASME B36.19M",
+     "od_mm": 60.3,
+     "wall_mm": 2.77,
+     "schedule": "10S",
+     "end": "butt-weld"
+    }
+   ],
+   "material": "316L",
+   "angle": 45,
+   "radius": "LR 1.5D",
+   "standards": [
+    "ASME B16.9",
+    "ASTM A403"
+   ],
+   "files": {
+    "step": "models/pipe-sch10s/elbow-45-lr/TMC_SPB5045S10_V1.step"
+   },
+   "model_version": 1,
+   "source": {
+    "original_path": "Pipe Fittings/Pipe Fittings Schedule 10/45 Elbow/TMC_SPB5045S10_V1.step"
+   },
+   "links": {
+    "category": "https://www.themetalcompany.co.nz/shop/pipe-fittings",
+    "search": "https://www.themetalcompany.co.nz/search/?query=SPB5045S10"
+   },
+   "search": "spb5045s10 45° elbow (long radius) pipe – schedule 10s butt-weld 50nb 316l 2\" dn50 60.3 45 deg",
+   "connects": [
+    "50NB"
+   ]
+  },
+  "SPET50S10": {
+   "part_number": "SPET50S10",
+   "supplier": "The Metal Company",
+   "description": "50NB Stainless Steel Pipe Equal Tee Schedule 10S ASME B16.9 ASTM A403 316L",
+   "system": "pipe-sch10s",
+   "system_name": "Pipe – Schedule 10S butt-weld",
+   "category": "tee",
+   "type": "pipe-tee-equal",
+   "type_name": "Equal Tee",
+   "size_label": "50NB",
+   "ends": [
+    {
+     "code": 50,
+     "label": "50NB",
+     "dn": "DN50",
+     "inch": "2\"",
+     "standard": "ASME B36.19M",
+     "od_mm": 60.3,
+     "wall_mm": 2.77,
+     "schedule": "10S",
+     "end": "butt-weld"
+    },
+    {
+     "code": 50,
+     "label": "50NB",
+     "dn": "DN50",
+     "inch": "2\"",
+     "standard": "ASME B36.19M",
+     "od_mm": 60.3,
+     "wall_mm": 2.77,
+     "schedule": "10S",
+     "end": "butt-weld"
+    },
+    {
+     "code": 50,
+     "label": "50NB",
+     "dn": "DN50",
+     "inch": "2\"",
+     "standard": "ASME B36.19M",
+     "od_mm": 60.3,
+     "wall_mm": 2.77,
+     "schedule": "10S",
+     "end": "butt-weld",
+     "role": "branch"
+    }
+   ],
+   "material": "316L",
+   "standards": [
+    "ASME B16.9",
+    "ASTM A403"
+   ],
+   "files": {
+    "step": "models/pipe-sch10s/tee-equal/TMC_SPET50S10_V1.step"
+   },
+   "model_version": 1,
+   "source": {
+    "original_path": "Pipe Fittings/Pipe Fittings Schedule 10/Tee Equal/TMC_SPET50S10_V1.step"
+   },
+   "links": {
+    "category": "https://www.themetalcompany.co.nz/shop/pipe-fittings",
+    "search": "https://www.themetalcompany.co.nz/search/?query=SPET50S10"
+   },
+   "search": "spet50s10 equal tee pipe – schedule 10s butt-weld 50nb 316l 2\" dn50 60.3",
+   "connects": [
+    "50NB"
+   ]
+  },
+  "SPRT5040S10": {
+   "part_number": "SPRT5040S10",
+   "supplier": "The Metal Company",
+   "description": "50NBx40NB Stainless Steel Pipe Reducing Tee Schedule 10S ASME B16.9 ASTM A403 316L",
+   "system": "pipe-sch10s",
+   "system_name": "Pipe – Schedule 10S butt-weld",
+   "category": "tee",
+   "type": "pipe-tee-reducing",
+   "type_name": "Reducing Tee",
+   "size_label": "50NB × 40NB",
+   "ends": [
+    {
+     "code": 50,
+     "label": "50NB",
+     "dn": "DN50",
+     "inch": "2\"",
+     "standard": "ASME B36.19M",
+     "od_mm": 60.3,
+     "wall_mm": 2.77,
+     "schedule": "10S",
+     "end": "butt-weld"
+    },
+    {
+     "code": 50,
+     "label": "50NB",
+     "dn": "DN50",
+     "inch": "2\"",
+     "standard": "ASME B36.19M",
+     "od_mm": 60.3,
+     "wall_mm": 2.77,
+     "schedule": "10S",
+     "end": "butt-weld"
+    },
+    {
+     "code": 40,
+     "label": "40NB",
+     "dn": "DN40",
+     "inch": "1-1/2\"",
+     "standard": "ASME B36.19M",
+     "od_mm": 48.3,
+     "wall_mm": 2.77,
+     "schedule": "10S",
+     "end": "butt-weld",
+     "role": "branch"
+    }
+   ],
+   "material": "316L",
+   "standards": [
+    "ASME B16.9",
+    "ASTM A403"
+   ],
+   "files": {
+    "step": "models/pipe-sch10s/tee-reducing/TMC_SPRT5040S10_V1.step"
+   },
+   "model_version": 1,
+   "source": {
+    "original_path": "Pipe Fittings/Pipe Fittings Schedule 10/Tee Reducing/TMC_SPRT5040S10_V1.step"
+   },
+   "links": {
+    "category": "https://www.themetalcompany.co.nz/shop/pipe-fittings",
+    "search": "https://www.themetalcompany.co.nz/search/?query=SPRT5040S10"
+   },
+   "search": "sprt5040s10 reducing tee pipe – schedule 10s butt-weld 50nb × 40nb 316l 2\" dn50 60.3 1-1/2\" dn40 48.3",
+   "connects": [
+    "40NB",
+    "50NB"
+   ]
+  },
+  "SPCR5040S10": {
+   "part_number": "SPCR5040S10",
+   "supplier": "The Metal Company",
+   "description": "50NBx40NB Stainless Steel Pipe Concentric Reducer Schedule 10S ASME B16.9 ASTM A403 316L",
+   "system": "pipe-sch10s",
+   "system_name": "Pipe – Schedule 10S butt-weld",
+   "category": "reducer",
+   "type": "pipe-reducer-concentric",
+   "type_name": "Concentric Reducer",
+   "size_label": "50NB × 40NB",
+   "ends": [
+    {
+     "code": 50,
+     "label": "50NB",
+     "dn": "DN50",
+     "inch": "2\"",
+     "standard": "ASME B36.19M",
+     "od_mm": 60.3,
+     "wall_mm": 2.77,
+     "schedule": "10S",
+     "end": "butt-weld"
+    },
+    {
+     "code": 40,
+     "label": "40NB",
+     "dn": "DN40",
+     "inch": "1-1/2\"",
+     "standard": "ASME B36.19M",
+     "od_mm": 48.3,
+     "wall_mm": 2.77,
+     "schedule": "10S",
+     "end": "butt-weld"
+    }
+   ],
+   "material": "316L",
+   "standards": [
+    "ASME B16.9",
+    "ASTM A403"
+   ],
+   "files": {
+    "step": "models/pipe-sch10s/reducer-concentric/TMC_SPCR5040S10_V1.step"
+   },
+   "model_version": 1,
+   "source": {
+    "original_path": "Pipe Fittings/Pipe Fittings Schedule 10/Reducer Concentric/TMC_SPCR5040S10_V1.step"
+   },
+   "links": {
+    "category": "https://www.themetalcompany.co.nz/shop/pipe-fittings",
+    "search": "https://www.themetalcompany.co.nz/search/?query=SPCR5040S10"
+   },
+   "search": "spcr5040s10 concentric reducer pipe – schedule 10s butt-weld 50nb × 40nb 316l 2\" dn50 60.3 1-1/2\" dn40 48.3",
+   "connects": [
+    "40NB",
+    "50NB"
+   ]
+  },
+  "SPEC50S10": {
+   "part_number": "SPEC50S10",
+   "supplier": "The Metal Company",
+   "description": "50NB Stainless Steel Pipe End Cap Schedule 10S ASME B16.9 ASTM A403 316L",
+   "system": "pipe-sch10s",
+   "system_name": "Pipe – Schedule 10S butt-weld",
+   "category": "cap",
+   "type": "pipe-cap",
+   "type_name": "End Cap",
+   "size_label": "50NB",
+   "ends": [
+    {
+     "code": 50,
+     "label": "50NB",
+     "dn": "DN50",
+     "inch": "2\"",
+     "standard": "ASME B36.19M",
+     "od_mm": 60.3,
+     "wall_mm": 2.77,
+     "schedule": "10S",
+     "end": "butt-weld"
+    }
+   ],
+   "material": "316L",
+   "standards": [
+    "ASME B16.9",
+    "ASTM A403"
+   ],
+   "files": {
+    "step": "models/pipe-sch10s/cap/TMC_SPEC50S10_V1.step"
+   },
+   "model_version": 1,
+   "source": {
+    "original_path": "Pipe Fittings/Pipe Fittings Schedule 10/End Cap/TMC_SPEC50S10_V1.step"
+   },
+   "links": {
+    "category": "https://www.themetalcompany.co.nz/shop/pipe-fittings",
+    "search": "https://www.themetalcompany.co.nz/search/?query=SPEC50S10"
+   },
+   "search": "spec50s10 end cap pipe – schedule 10s butt-weld 50nb 316l 2\" dn50 60.3",
+   "connects": [
+    "50NB"
+   ]
+  },
+  "SPF50E": {
+   "part_number": "SPF50E",
+   "supplier": "The Metal Company",
+   "description": "50NB Stainless Steel Pipe Flange Table E AS2129 ASTM A182 F316L FFSO/SOFF",
+   "system": "pipe-sch10s",
+   "system_name": "Pipe – Schedule 10S butt-weld",
+   "category": "flange",
+   "type": "pipe-flange-e",
+   "type_name": "Slip-on Plate Flange Table E",
+   "size_label": "50NB",
+   "ends": [
+    {
+     "code": 50,
+     "label": "50NB",
+     "dn": "DN50",
+     "inch": "2\"",
+     "standard": "ASME B36.19M",
+     "od_mm": 60.3,
+     "wall_mm": 2.77,
+     "schedule": "10S",
+     "end": "slip-on (fillet weld)"
+    },
+    {
+     "code": 50,
+     "label": "50NB",
+     "dn": "DN50",
+     "inch": "2\"",
+     "end": "flange face",
+     "flange": "AS2129 Table E",
+     "od_mm": 60.3,
+     "filled": [
+      "label",
+      "flange_od_mm",
+      "pcd_mm",
+      "bolt_holes",
+      "bolt_hole_mm"
+     ],
+     "flange_od_mm": 150,
+     "pcd_mm": 114,
+     "bolt_holes": 4,
+     "bolt_hole_mm": 18
+    }
+   ],
+   "material": "F316L",
+   "flange": "AS2129 Table E",
+   "standards": [
+    "AS2129",
+    "ASTM A182"
+   ],
+   "files": {
+    "step": "models/pipe-sch10s/flange-table-e/TMC_SPF50E_V1.step"
+   },
+   "model_version": 1,
+   "source": {
+    "original_path": "Flanges/Pipe Flanges/Flange Table E/TMC_SPF50E_V1.step"
+   },
+   "links": {
+    "category": "https://www.themetalcompany.co.nz/shop/pipe-fittings",
+    "search": "https://www.themetalcompany.co.nz/search/?query=SPF50E"
+   },
+   "search": "spf50e slip-on plate flange table e pipe – schedule 10s butt-weld 50nb f316l 2\" dn50 (fillet weld) 60.3 face",
+   "connects": [
+    "50NB"
+   ]
+  },
+  "SPB4090S10": {
+   "part_number": "SPB4090S10",
+   "supplier": "The Metal Company",
+   "description": "40NB Stainless Steel Pipe Bend 90 Deg Schedule 10S ASME B16.9 ASTM A403 316L",
+   "system": "pipe-sch10s",
+   "system_name": "Pipe – Schedule 10S butt-weld",
+   "category": "elbow",
+   "type": "pipe-elbow-90",
+   "type_name": "90° Elbow (long radius)",
+   "size_label": "40NB",
+   "ends": [
+    {
+     "code": 40,
+     "label": "40NB",
+     "dn": "DN40",
+     "inch": "1-1/2\"",
+     "standard": "ASME B36.19M",
+     "od_mm": 48.3,
+     "wall_mm": 2.77,
+     "schedule": "10S",
+     "end": "butt-weld"
+    },
+    {
+     "code": 40,
+     "label": "40NB",
+     "dn": "DN40",
+     "inch": "1-1/2\"",
+     "standard": "ASME B36.19M",
+     "od_mm": 48.3,
+     "wall_mm": 2.77,
+     "schedule": "10S",
+     "end": "butt-weld"
+    }
+   ],
+   "material": "316L",
+   "angle": 90,
+   "radius": "LR 1.5D",
+   "standards": [
+    "ASME B16.9",
+    "ASTM A403"
+   ],
+   "files": {
+    "step": "models/pipe-sch10s/elbow-90-lr/TMC_SPB4090S10_V1.step"
+   },
+   "model_version": 1,
+   "source": {
+    "original_path": "Pipe Fittings/Pipe Fittings Schedule 10/90 Elbow/TMC_SPB4090S10_V1.step"
+   },
+   "links": {
+    "category": "https://www.themetalcompany.co.nz/shop/pipe-fittings",
+    "search": "https://www.themetalcompany.co.nz/search/?query=SPB4090S10"
+   },
+   "search": "spb4090s10 90° elbow (long radius) pipe – schedule 10s butt-weld 40nb 316l 1-1/2\" dn40 48.3 90 deg",
+   "connects": [
+    "40NB"
+   ]
+  },
+  "SPET40S10": {
+   "part_number": "SPET40S10",
+   "supplier": "The Metal Company",
+   "description": "40NB Stainless Steel Pipe Equal Tee Schedule 10S ASME B16.9 ASTM A403 316L",
+   "system": "pipe-sch10s",
+   "system_name": "Pipe – Schedule 10S butt-weld",
+   "category": "tee",
+   "type": "pipe-tee-equal",
+   "type_name": "Equal Tee",
+   "size_label": "40NB",
+   "ends": [
+    {
+     "code": 40,
+     "label": "40NB",
+     "dn": "DN40",
+     "inch": "1-1/2\"",
+     "standard": "ASME B36.19M",
+     "od_mm": 48.3,
+     "wall_mm": 2.77,
+     "schedule": "10S",
+     "end": "butt-weld"
+    },
+    {
+     "code": 40,
+     "label": "40NB",
+     "dn": "DN40",
+     "inch": "1-1/2\"",
+     "standard": "ASME B36.19M",
+     "od_mm": 48.3,
+     "wall_mm": 2.77,
+     "schedule": "10S",
+     "end": "butt-weld"
+    },
+    {
+     "code": 40,
+     "label": "40NB",
+     "dn": "DN40",
+     "inch": "1-1/2\"",
+     "standard": "ASME B36.19M",
+     "od_mm": 48.3,
+     "wall_mm": 2.77,
+     "schedule": "10S",
+     "end": "butt-weld",
+     "role": "branch"
+    }
+   ],
+   "material": "316L",
+   "standards": [
+    "ASME B16.9",
+    "ASTM A403"
+   ],
+   "files": {
+    "step": "models/pipe-sch10s/tee-equal/TMC_SPET40S10_V1.step"
+   },
+   "model_version": 1,
+   "source": {
+    "original_path": "Pipe Fittings/Pipe Fittings Schedule 10/Tee Equal/TMC_SPET40S10_V1.step"
+   },
+   "links": {
+    "category": "https://www.themetalcompany.co.nz/shop/pipe-fittings",
+    "search": "https://www.themetalcompany.co.nz/search/?query=SPET40S10"
+   },
+   "search": "spet40s10 equal tee pipe – schedule 10s butt-weld 40nb 316l 1-1/2\" dn40 48.3",
+   "connects": [
+    "40NB"
+   ]
+  },
+  "SPEC40S10": {
+   "part_number": "SPEC40S10",
+   "supplier": "The Metal Company",
+   "description": "40NB Stainless Steel Pipe End Cap Schedule 10S ASME B16.9 ASTM A403 316L",
+   "system": "pipe-sch10s",
+   "system_name": "Pipe – Schedule 10S butt-weld",
+   "category": "cap",
+   "type": "pipe-cap",
+   "type_name": "End Cap",
+   "size_label": "40NB",
+   "ends": [
+    {
+     "code": 40,
+     "label": "40NB",
+     "dn": "DN40",
+     "inch": "1-1/2\"",
+     "standard": "ASME B36.19M",
+     "od_mm": 48.3,
+     "wall_mm": 2.77,
+     "schedule": "10S",
+     "end": "butt-weld"
+    }
+   ],
+   "material": "316L",
+   "standards": [
+    "ASME B16.9",
+    "ASTM A403"
+   ],
+   "files": {
+    "step": "models/pipe-sch10s/cap/TMC_SPEC40S10_V1.step"
+   },
+   "model_version": 1,
+   "source": {
+    "original_path": "Pipe Fittings/Pipe Fittings Schedule 10/End Cap/TMC_SPEC40S10_V1.step"
+   },
+   "links": {
+    "category": "https://www.themetalcompany.co.nz/shop/pipe-fittings",
+    "search": "https://www.themetalcompany.co.nz/search/?query=SPEC40S10"
+   },
+   "search": "spec40s10 end cap pipe – schedule 10s butt-weld 40nb 316l 1-1/2\" dn40 48.3",
+   "connects": [
+    "40NB"
+   ]
+  },
+  "SPF40E": {
+   "part_number": "SPF40E",
+   "supplier": "The Metal Company",
+   "description": "40NB Stainless Steel Pipe Flange Table E *Non Standard* ASTM A182 F316L FFSO/SOFF (Non Standard AS2129, Thickness exceeds Standard @ 10.0mm)",
+   "system": "pipe-sch10s",
+   "system_name": "Pipe – Schedule 10S butt-weld",
+   "category": "flange",
+   "type": "pipe-flange-e",
+   "type_name": "Slip-on Plate Flange Table E",
+   "size_label": "40NB",
+   "ends": [
+    {
+     "code": 40,
+     "label": "40NB",
+     "dn": "DN40",
+     "inch": "1-1/2\"",
+     "standard": "ASME B36.19M",
+     "od_mm": 48.3,
+     "wall_mm": 2.77,
+     "schedule": "10S",
+     "end": "slip-on (fillet weld)"
+    },
+    {
+     "code": 40,
+     "label": "40NB",
+     "dn": "DN40",
+     "inch": "1-1/2\"",
+     "end": "flange face",
+     "flange": "AS2129 Table E",
+     "od_mm": 48.3,
+     "filled": [
+      "label",
+      "flange_od_mm",
+      "pcd_mm",
+      "bolt_holes",
+      "bolt_hole_mm"
+     ],
+     "flange_od_mm": 135,
+     "pcd_mm": 98,
+     "bolt_holes": 4,
+     "bolt_hole_mm": 14
+    }
+   ],
+   "material": "F316L",
+   "flange": "AS2129 Table E",
+   "standards": [
+    "AS2129",
+    "ASTM A182"
+   ],
+   "note": "Supplier flags as non-standard: Non Standard AS2129, Thickness exceeds Standard @ 10.0mm",
+   "files": {
+    "step": "models/pipe-sch10s/flange-table-e/TMC_SPF40E_V1.step"
+   },
+   "model_version": 1,
+   "source": {
+    "original_path": "Flanges/Pipe Flanges/Flange Table E/TMC_SPF40E_V1.step"
+   },
+   "links": {
+    "category": "https://www.themetalcompany.co.nz/shop/pipe-fittings",
+    "search": "https://www.themetalcompany.co.nz/search/?query=SPF40E"
+   },
+   "search": "spf40e slip-on plate flange table e pipe – schedule 10s butt-weld 40nb f316l 1-1/2\" dn40 (fillet weld) 48.3 face",
+   "connects": [
+    "40NB"
+   ]
+  },
+  "CILBV50DE": {
+   "part_number": "CILBV50DE",
+   "supplier": "The Metal Company",
+   "description": "50NB Butterfly Valve – lugged, cast iron Cast iron body (description generated – none in STEP header)",
+   "system": "valves",
+   "system_name": "Valves & strainers",
+   "category": "valve",
+   "type": "butterfly-lugged",
+   "type_name": "Butterfly Valve – lugged, cast iron",
+   "size_label": "50NB",
+   "ends": [
+    {
+     "code": 50,
+     "label": "50NB",
+     "dn": "DN50",
+     "inch": "2\"",
+     "end": "lugged between flanges",
+     "flange": "AS2129 Table D & E",
+     "od_mm": 60.3,
+     "filled": [
+      "od_mm",
+      "flange_od_mm",
+      "pcd_mm",
+      "bolt_holes",
+      "bolt_hole_mm"
+     ],
+     "flange_od_mm": 150,
+     "pcd_mm": 114,
+     "bolt_holes": 4,
+     "bolt_hole_mm": 18
+    },
+    {
+     "code": 50,
+     "label": "50NB",
+     "dn": "DN50",
+     "inch": "2\"",
+     "end": "lugged between flanges",
+     "flange": "AS2129 Table D & E",
+     "od_mm": 60.3,
+     "filled": [
+      "od_mm",
+      "flange_od_mm",
+      "pcd_mm",
+      "bolt_holes",
+      "bolt_hole_mm"
+     ],
+     "flange_od_mm": 150,
+     "pcd_mm": 114,
+     "bolt_holes": 4,
+     "bolt_hole_mm": 18
+    }
+   ],
+   "material": "Cast iron body",
+   "valve": "butterfly",
+   "flange_drilling": "AS2129 Table D & E",
+   "body": "cast iron",
+   "description_generated": true,
+   "files": {
+    "step": "models/valves/butterfly-valve-lugged/TMC_CILBV50DE_V1.step"
+   },
+   "model_version": 1,
+   "source": {
+    "original_path": "Valves/Flanged/Table D_E Lugged Butterfly Valve/TMC_CILBV50DE_V1.step"
+   },
+   "links": {
+    "category": "https://www.themetalcompany.co.nz/shop/valves",
+    "search": "https://www.themetalcompany.co.nz/search/?query=CILBV50DE"
+   },
+   "search": "cilbv50de butterfly valve – lugged, cast iron valves & strainers 50nb body 2\" dn50 lugged between flanges",
+   "connects": [
+    "50NB"
+   ],
+   "function": "isolation"
+  },
+  "CIWCV50": {
+   "part_number": "CIWCV50",
+   "supplier": "The Metal Company",
+   "description": "50NB Wafer Check Valve – cast iron Cast iron body (description generated – none in STEP header)",
+   "system": "valves",
+   "system_name": "Valves & strainers",
+   "category": "valve",
+   "type": "check-wafer",
+   "type_name": "Wafer Check Valve – cast iron",
+   "size_label": "50NB",
+   "ends": [
+    {
+     "code": 50,
+     "label": "50NB",
+     "dn": "DN50",
+     "inch": "2\"",
+     "end": "wafer between flanges",
+     "od_mm": 60.3,
+     "filled": [
+      "od_mm",
+      "flange",
+      "flange_od_mm",
+      "pcd_mm",
+      "bolt_holes",
+      "bolt_hole_mm"
+     ],
+     "flange": "AS2129 Table E",
+     "notes": [
+      "flange drilling not stated; Table E assumed"
+     ],
+     "flange_od_mm": 150,
+     "pcd_mm": 114,
+     "bolt_holes": 4,
+     "bolt_hole_mm": 18
+    },
+    {
+     "code": 50,
+     "label": "50NB",
+     "dn": "DN50",
+     "inch": "2\"",
+     "end": "wafer between flanges",
+     "od_mm": 60.3,
+     "filled": [
+      "od_mm",
+      "flange",
+      "flange_od_mm",
+      "pcd_mm",
+      "bolt_holes",
+      "bolt_hole_mm"
+     ],
+     "flange": "AS2129 Table E",
+     "notes": [
+      "flange drilling not stated; Table E assumed"
+     ],
+     "flange_od_mm": 150,
+     "pcd_mm": 114,
+     "bolt_holes": 4,
+     "bolt_hole_mm": 18
+    }
+   ],
+   "material": "Cast iron body",
+   "valve": "check",
+   "body": "cast iron",
+   "description_generated": true,
+   "files": {
+    "step": "models/valves/check-valve-wafer/TMC_CIWCV50_V1.step"
+   },
+   "model_version": 1,
+   "source": {
+    "original_path": "Valves/Flanged/Wafer Check Valve/TMC_CIWCV50_V1.step"
+   },
+   "links": {
+    "category": "https://www.themetalcompany.co.nz/shop/valves",
+    "search": "https://www.themetalcompany.co.nz/search/?query=CIWCV50"
+   },
+   "search": "ciwcv50 wafer check valve – cast iron valves & strainers 50nb body 2\" dn50 between flanges",
+   "connects": [
+    "50NB"
+   ],
+   "function": "non-return"
+  }
+ }
+}

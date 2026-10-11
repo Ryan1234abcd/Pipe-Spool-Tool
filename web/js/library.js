@@ -1,20 +1,20 @@
-// STEP library on the user's computer.
+// Part library: the user's Part-Library folder (library.json + geometry.json +
+// models/…), or the small demo set built into the page.
 //
-// The user picks their library folder. Where the browser supports it
-// (Chrome / Edge: File System Access API) the folder is remembered and the port
-// set-up of each part is written next to the STEP file as `<part>.stp.json`, so
-// it travels with the library. Otherwise the folder is read through a normal
-// folder picker and port set-ups are kept in this browser.
-
-const STEP_RE = /\.(stp|step)$/i;
+// Where the browser supports it (Chrome / Edge: File System Access API) the
+// folder is remembered between visits. Otherwise it is read through a normal
+// folder picker each time. STEP files are only read when a part is used.
+import { endFamily } from './joints.js';
 
 // ------------------------------------------------------------- IndexedDB
 let dbp = null;
 function db() {
   if (!dbp) {
     dbp = new Promise((resolve, reject) => {
-      const req = indexedDB.open('pipe-spool-tool', 1);
-      req.onupgradeneeded = () => { req.result.createObjectStore('kv'); req.result.createObjectStore('mesh'); };
+      const req = indexedDB.open('pipe-spool-tool', 2);
+      req.onupgradeneeded = () => {
+        for (const s of ['kv', 'mesh']) if (!req.result.objectStoreNames.contains(s)) req.result.createObjectStore(s);
+      };
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
     });
@@ -38,12 +38,19 @@ export const kvSet = (k, v) => idb('kv', 'readwrite', (s) => s.put(v, k));
 export const meshGet = (k) => idb('mesh', 'readonly', (s) => s.get(k));
 export const meshSet = (k, v) => idb('mesh', 'readwrite', (s) => s.put(v, k));
 
+/** Short name for a part: its type and size, e.g. "90° Elbow (long radius) 50NB". */
+export function partName(p) {
+  return `${p.type_name || p.type} ${p.size_label || ''}`.trim();
+}
+
 // --------------------------------------------------------------- library
 export class Library {
   constructor() {
-    this.parts = new Map(); // id -> part
-    this.folderName = null;
-    this.writable = false;
+    this.parts = new Map(); // id -> part (library.json entry + geom + ports)
+    this.systems = [];
+    this.name = null;
+    this.source = null; // 'demo' | 'folder'
+    this._files = null; // fallback: path -> File
     this.dirHandle = null;
   }
 
@@ -51,142 +58,112 @@ export class Library {
     try { return typeof window.showDirectoryPicker === 'function' && window.self === window.top; } catch { return false; }
   }
 
-  /** Built-in sample parts: {path: {step: text, meta}} */
-  addSamples(samples) {
-    for (const [path, s] of Object.entries(samples)) {
-      const id = `Samples/${path}`;
-      this.parts.set(id, this._part(id, s.meta, { kind: 'sample', text: s.step }, s.step.length, 0));
+  /** Build the part map from library.json + geometry.json contents. */
+  _index(lib, geometry, name, source) {
+    this.parts.clear();
+    this.systems = lib.systems || [];
+    this.name = name;
+    this.source = source;
+    const geo = geometry?.parts || {};
+    for (const [id, p] of Object.entries(lib.parts || {})) {
+      const g = geo[id];
+      if (!g || g.ends.length !== p.ends.length) continue; // no end positions: can't be placed
+      const ports = p.ends.map((e, i) => ({
+        name: String(i),
+        origin: g.ends[i].o,
+        dir: g.ends[i].d,
+        up: g.ends[i].u,
+        od: e.od_mm,
+        wall: e.wall_mm,
+        label: e.label,
+        end: e.end,
+        family: endFamily(e.end),
+        flange: e.flange_od_mm || null,
+        engage: g.ends[i].engage || 0,
+        thread: e.thread || null,
+      }));
+      this.parts.set(id, { ...p, id, ports, centre: g.c, bbox: g.bbox, name: partName(p) });
     }
   }
 
-  _part(id, meta, source, size, lastModified) {
-    const folder = id.includes('/') ? id.slice(0, id.lastIndexOf('/')) : '';
-    const file = id.slice(id.lastIndexOf('/') + 1);
-    return {
-      id, file, source, size, lastModified,
-      name: meta?.name || file.replace(STEP_RE, '').replace(/_/g, ' '),
-      category: meta?.category || folder || 'Library',
-      ports: meta?.ports || [],
-      notes: meta?.notes || '',
-      configured: !!meta?.ports?.length,
-    };
+  /** The demo parts built into the page: {library, geometry, files: {path: text}} */
+  loadDemo(demo) {
+    this._demo = demo;
+    this._index(demo.library, demo.geometry, 'Demo parts', 'demo');
   }
 
-  /** Ask for a folder with the File System Access API. */
+  /** Ask for the Part-Library folder with the File System Access API. */
   async pickDirectory() {
-    const handle = await window.showDirectoryPicker({ id: 'step-library', mode: 'readwrite' });
-    await kvSet('libraryHandle', handle);
+    const handle = await window.showDirectoryPicker({ id: 'part-library', mode: 'read' });
     await this.loadDirectory(handle);
+    await kvSet('libraryHandle', handle);
   }
 
-  /** Re-open the remembered folder (asks the browser for permission again if needed). */
+  /** Re-open the remembered folder (asks for permission again if needed). */
   async reconnect(interactive) {
     const handle = await kvGet('libraryHandle');
     if (!handle) return false;
-    let perm = await handle.queryPermission({ mode: 'readwrite' });
-    if (perm !== 'granted' && interactive) perm = await handle.requestPermission({ mode: 'readwrite' });
-    if (perm !== 'granted') {
-      perm = await handle.queryPermission({ mode: 'read' });
-      if (perm !== 'granted') return handle.name; // known but needs a click
-    }
+    let perm = await handle.queryPermission({ mode: 'read' });
+    if (perm !== 'granted' && interactive) perm = await handle.requestPermission({ mode: 'read' });
+    if (perm !== 'granted') return handle.name; // known but needs a click
     await this.loadDirectory(handle);
     return true;
   }
 
   async rememberedName() { return (await kvGet('libraryHandle'))?.name || null; }
 
-  _clearUserParts() {
-    for (const id of [...this.parts.keys()]) if (!id.startsWith('Samples/')) this.parts.delete(id);
-  }
-
   async loadDirectory(handle) {
-    this._clearUserParts();
-    this.dirHandle = handle;
-    this.folderName = handle.name;
-    this.writable = (await handle.queryPermission({ mode: 'readwrite' })) === 'granted';
-    const files = new Map();
-    const walk = async (dir, prefix) => {
-      for await (const [name, h] of dir.entries()) {
-        if (h.kind === 'directory') { if (!name.startsWith('.')) await walk(h, `${prefix}${name}/`); }
-        else files.set(`${prefix}${name}`, { handle: h, dir });
-      }
+    const readJson = async (name) => {
+      try { return JSON.parse(await (await (await handle.getFileHandle(name)).getFile()).text()); } catch { return null; }
     };
-    await walk(handle, '');
-    for (const [path, f] of files) {
-      if (!STEP_RE.test(path)) continue;
-      const file = await f.handle.getFile();
-      const meta = await this._readSidecar(path, () => files.get(`${path}.json`)?.handle.getFile());
-      this.parts.set(path, this._part(path, meta, { kind: 'handle', handle: f.handle, dir: f.dir }, file.size, file.lastModified));
-    }
+    const lib = await readJson('library.json');
+    if (!lib?.parts) throw new Error(`“${handle.name}” has no library.json – choose the Part-Library folder.`);
+    const geometry = await readJson('geometry.json');
+    if (!geometry) throw new Error(`“${handle.name}” has no geometry.json – update your copy of Part-Library.`);
+    this.dirHandle = handle;
+    this._files = null;
+    this._index(lib, geometry, handle.name, 'folder');
   }
 
   /** Fallback: files from <input type=file webkitdirectory>. */
   async loadFileList(fileList) {
-    this._clearUserParts();
-    this.dirHandle = null;
-    this.writable = false;
     const files = new Map();
+    let root = null;
     for (const f of fileList) {
       const rel = (f.webkitRelativePath || f.name).split('/');
-      if (rel.length > 1) { this.folderName = rel[0]; rel.shift(); }
+      if (rel.length > 1) { root = rel[0]; rel.shift(); }
       files.set(rel.join('/'), f);
     }
-    for (const [path, f] of files) {
-      if (!STEP_RE.test(path)) continue;
-      const meta = await this._readSidecar(path, async () => files.get(`${path}.json`));
-      this.parts.set(path, this._part(path, meta, { kind: 'file', file: f }, f.size, f.lastModified));
-    }
-  }
-
-  async _readSidecar(path, getFile) {
-    const local = await kvGet(`ports:${path}`); // set-up saved in this browser wins
-    if (local) return local;
-    try {
-      const f = await getFile();
-      return f ? JSON.parse(await f.text()) : null;
-    } catch { return null; }
+    const json = async (name) => { const f = files.get(name); return f ? JSON.parse(await f.text()) : null; };
+    const lib = await json('library.json');
+    if (!lib?.parts) throw new Error('That folder has no library.json – choose the Part-Library folder.');
+    const geometry = await json('geometry.json');
+    if (!geometry) throw new Error('That folder has no geometry.json – update your copy of Part-Library.');
+    this.dirHandle = null;
+    this._files = files;
+    this._index(lib, geometry, root || 'Part-Library', 'folder');
   }
 
   async bytes(id) {
     const p = this.parts.get(id);
     if (!p) throw new Error(`Part not in the library: ${id}`);
-    const s = p.source;
-    if (s.kind === 'sample') return new TextEncoder().encode(s.text);
-    const file = s.kind === 'handle' ? await s.handle.getFile() : s.file;
+    const path = p.files.step;
+    if (this.source === 'demo') return new TextEncoder().encode(this._demo.files[path]);
+    if (this._files) {
+      const f = this._files.get(path);
+      if (!f) throw new Error(`Missing file ${path}`);
+      return new Uint8Array(await f.arrayBuffer());
+    }
+    let dir = this.dirHandle;
+    const segs = path.split('/');
+    for (const s of segs.slice(0, -1)) dir = await dir.getDirectoryHandle(s);
+    const file = await (await dir.getFileHandle(segs[segs.length - 1])).getFile();
     return new Uint8Array(await file.arrayBuffer());
   }
 
   cacheKey(id) {
     const p = this.parts.get(id);
-    return p ? `${id}|${p.size}|${p.lastModified}` : id;
-  }
-
-  /** Save a part's name/category/ports. Returns where it was saved. */
-  async savePart(id, meta) {
-    const p = this.parts.get(id);
-    const data = { name: meta.name, category: meta.category, notes: meta.notes || '', ports: meta.ports };
-    Object.assign(p, data, { configured: data.ports.length > 0 });
-    if (p.source.kind === 'handle' && this.writable) {
-      try {
-        const fh = await p.source.dir.getFileHandle(`${p.file}.json`, { create: true });
-        const w = await fh.createWritable();
-        await w.write(JSON.stringify(data, null, 2));
-        await w.close();
-        await idb('kv', 'readwrite', (s) => s.delete(`ports:${id}`));
-        return 'folder';
-      } catch { /* fall through to browser storage */ }
-    }
-    await kvSet(`ports:${id}`, data);
-    return 'browser';
-  }
-
-  /** Port set-ups kept in this browser (for parts whose folder isn't writable). */
-  browserSetups() {
-    const out = {};
-    for (const p of this.parts.values()) {
-      if (p.configured && !p.id.startsWith('Samples/')) out[p.id] = { name: p.name, category: p.category, notes: p.notes, ports: p.ports };
-    }
-    return out;
+    return `${id}|${p?.files?.step || ''}|v${p?.model_version || 1}`;
   }
 
   list() { return [...this.parts.values()]; }

@@ -10,67 +10,50 @@
 <body>
 <header>
   <div class="brand">Pipe Spool Tool</div>
-  <nav class="tabs">
-    <button data-tab="builder" class="active">Spool builder</button>
-    <button data-tab="library">Library setup</button>
-  </nav>
   <div id="engine" class="engine" hidden>Loading CAD engine…</div>
   <div class="project">
-    <input id="projectName" value="Spool-01" title="Spool name (used for the STEP file)">
+    <input id="projectName" value="Spool-01" title="Spool name (used for the STEP file)" aria-label="Spool name">
     <button id="btnNew" title="New spool">New</button>
     <button id="btnOpen" title="Open a saved spool">Open…</button>
     <button id="btnSave" title="Save the spool in this browser (Ctrl+S)">Save</button>
-    <button id="btnBom" title="Bill of materials / cut list">BOM</button>
-    <button id="btnExport" class="primary" title="Build and download the combined STEP file">Export STEP</button>
+    <button id="btnBom" title="Parts list and pipe cut list">BOM</button>
+    <button id="btnExport" class="primary" title="Build and download one STEP file">Export STEP</button>
   </div>
 </header>
 
 <main>
-  <!-- ======================================================== BUILDER -->
   <section id="tab-builder" class="tab active">
     <aside class="left">
       <div class="panel">
-        <h3>STEP library</h3>
+        <h3>Part library</h3>
         <div id="libFolder" class="libfolder"></div>
         <div class="row">
-          <button id="btnOpenLib" title="Choose the folder on your computer that holds your STEP fittings and valves">Open folder…</button>
+          <button id="btnOpenLib" title="Choose your Part-Library folder (the one with library.json)">Open Part-Library…</button>
           <button id="btnReconnect" hidden title="Open the folder you used last time">Reconnect</button>
         </div>
         <input type="file" id="libInput" webkitdirectory directory multiple hidden>
       </div>
-      <div class="panel">
-        <h3>Pipe</h3>
-        <label>Type <select id="selType"></select></label>
-        <label>Start size <select id="selSize"></select></label>
-        <button id="btnPipe" class="wide" title="Add a pipe at the orange end (P)">Add pipe <kbd>P</kbd></button>
-      </div>
       <div class="panel grow">
-        <h3>Fittings &amp; valves <span class="hint">click to add at the orange end</span></h3>
-        <div class="row">
-          <input id="partSearch" placeholder="Search… (F)" class="grow">
-          <label class="inline" title="Show parts that don't fit the selected pipe type"><input type="checkbox" id="chkAllParts"> All</label>
-        </div>
+        <h3>Add a part</h3>
+        <div id="nextEnd" class="next-end"></div>
+        <label id="startSizeRow" class="inline-row">Start size <select id="selStart"></select></label>
+        <input id="partSearch" placeholder="Search… (F)" class="search" aria-label="Search parts">
         <div id="partList" class="list"></div>
       </div>
     </aside>
 
     <div class="viewport-wrap">
       <div class="view-toolbar">
-        <button data-view="iso" title="Isometric (SE)">Iso</button>
-        <button data-view="iso2" title="Isometric (SW)">Iso 2</button>
-        <button data-view="iso3" title="Isometric (NW)">Iso 3</button>
-        <button data-view="iso4" title="Isometric (NE)">Iso 4</button>
+        <button data-view="iso" title="Isometric">Iso</button>
         <button data-view="top">Top</button>
         <button data-view="front">Front</button>
         <button data-view="right">Right</button>
         <button id="btnFit" title="Zoom to fit (Home)">Fit</button>
         <span class="sep"></span>
         <label><input type="checkbox" id="chkDims" checked> Dimensions</label>
-        <label><input type="checkbox" id="chkTags" checked> Tags</label>
-        <label><input type="checkbox" id="chkXray"> X-ray</label>
         <span class="sep"></span>
-        <button id="btnUndo" title="Undo (Ctrl+Z)">↶</button>
-        <button id="btnRedo" title="Redo (Ctrl+Y)">↷</button>
+        <button id="btnUndo" title="Undo (Ctrl+Z)" aria-label="Undo">↶</button>
+        <button id="btnRedo" title="Redo (Ctrl+Y)" aria-label="Redo">↷</button>
       </div>
       <div id="viewport" class="viewport"></div>
       <div id="status" class="status"></div>
@@ -79,55 +62,9 @@
     <aside class="right">
       <div class="panel" id="props"></div>
       <div class="panel grow">
-        <h3>Components</h3>
+        <h3>Spool</h3>
         <div id="tree" class="list tree"></div>
       </div>
-      <details class="panel help">
-        <summary>Keyboard shortcuts</summary>
-        <table>
-          <tr><td>P</td><td>Add pipe</td></tr>
-          <tr><td>F or /</td><td>Search parts, Enter adds the first match</td></tr>
-          <tr><td>[ / ]</td><td>Insert before / after the selected component</td></tr>
-          <tr><td>R / Shift+R</td><td>Roll selected +90° / −90°</td></tr>
-          <tr><td>X</td><td>Flip (attach by the other connection)</td></tr>
-          <tr><td>N</td><td>Next open end</td></tr>
-          <tr><td>Del</td><td>Delete selected (and downstream)</td></tr>
-          <tr><td>Ctrl+Z / Ctrl+Y</td><td>Undo / redo</td></tr>
-          <tr><td>Home</td><td>Zoom to fit</td></tr>
-          <tr><td>Mouse</td><td>Left: orbit · Right/middle: pan · Wheel: zoom</td></tr>
-        </table>
-      </details>
-    </aside>
-  </section>
-
-  <!-- ======================================================== LIBRARY -->
-  <section id="tab-library" class="tab">
-    <aside class="left">
-      <div class="panel">
-        <h3>STEP library</h3>
-        <div class="hint" id="libPath"></div>
-        <button id="libOpen">Open folder…</button>
-      </div>
-      <div class="panel grow">
-        <input id="libSearch" placeholder="Search…">
-        <div id="libList" class="list"></div>
-      </div>
-    </aside>
-    <div class="viewport-wrap">
-      <div class="view-toolbar">
-        <button data-lview="iso">Iso</button>
-        <button data-lview="top">Top</button>
-        <button data-lview="front">Front</button>
-        <button data-lview="right">Right</button>
-        <button id="libFit">Fit</button>
-        <span class="sep"></span>
-        <label><input type="checkbox" id="libShowAll"> Show all circle candidates</label>
-      </div>
-      <div id="libViewport" class="viewport"></div>
-      <div id="libStatus" class="status">Select a STEP file to set up its connections.</div>
-    </div>
-    <aside class="right wide">
-      <div class="panel grow" id="libEditor"><p class="hint">No part selected.</p></div>
     </aside>
   </section>
 </main>
@@ -153,20 +90,32 @@
   </div>
 </dialog>
 
-<dialog id="dlgExport">
+<dialog id="dlgExport" class="export">
   <h3>Export STEP</h3>
-  <label><input type="checkbox" id="expFuse" checked> Merge into a single solid body (recommended for Revit families)</label>
-  <label><input type="checkbox" id="expHollow" checked> Hollow pipes (show the bore)</label>
-  <p class="hint">Everything runs in this browser. Merging large manufacturer models can take a minute.
-    If they can't be merged, the file still contains every part as separate bodies.</p>
+  <div class="levels" role="radiogroup" aria-label="Level of detail">
+    <label><input type="radio" name="expLevel" value="envelope"> <b>Envelope</b> <span class="hint">smallest file: smooth outlines, a block for each handle</span></label>
+    <label><input type="radio" name="expLevel" value="wrap" checked> <b>Shrink-wrap</b> <span class="hint">follows each part's outline at the resolution below</span></label>
+    <label><input type="radio" name="expLevel" value="full"> <b>Full model</b> <span class="hint">the original STEP geometry, largest file</span></label>
+  </div>
+  <label id="expResRow" class="res-row">Resolution
+    <input type="range" id="expRes" min="1" max="50" step="1" value="5" aria-label="Resolution in millimetres">
+    <output id="expResOut">5 mm</output>
+    <span class="hint">smaller = closer fit, more faces</span>
+  </label>
+  <label id="expHollowRow"><input type="checkbox" id="expHollow"> Hollow pipes (show the bore)</label>
+  <div class="export-preview">
+    <div id="expView" class="viewport"></div>
+    <div id="expStats" class="hint"></div>
+  </div>
   <div class="row">
+    <button id="expBuild">Build preview</button>
     <span class="grow"></span>
-    <button data-close>Cancel</button>
-    <button id="expGo" class="primary">Export</button>
+    <button data-close>Close</button>
+    <button id="expGo" class="primary">Download STEP</button>
   </div>
   <div id="expMsg" class="hint"></div>
 </dialog>
 
-<div id="toast"></div>
+<div id="toast" role="status"></div>
 </body>
 </html>

@@ -136,6 +136,76 @@ export class Cad {
     return r;
   }
 
+  _pnt(p) { return new this.oc.gp_Pnt(p[0], p[1], p[2]); }
+  _dir(d) { return new this.oc.gp_Dir(d[0], d[1], d[2]); }
+
+  /** Solid of revolution: profile [[h, r]…] about the line o + h·d, closed to the axis. */
+  revolve(o, d, x, pts) {
+    const { oc } = this;
+    const at = (h, r) => [0, 1, 2].map((i) => o[i] + d[i] * h + x[i] * r);
+    const ring = [[pts[0][0], 0], ...pts, [pts[pts.length - 1][0], 0]];
+    const poly = [];
+    for (const q of ring) {
+      const last = poly[poly.length - 1];
+      if (!last || Math.hypot(q[0] - last[0], q[1] - last[1]) > 1e-4) poly.push(q);
+    }
+    // drop points on a straight line between their neighbours (one face per straight run)
+    for (let i = 1; i < poly.length - 1;) {
+      const [a, b, c] = [poly[i - 1], poly[i], poly[i + 1]];
+      const cr = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+      if (Math.abs(cr) / (Math.hypot(c[0] - a[0], c[1] - a[1]) || 1) < 0.01) poly.splice(i, 1); else i++; // within 0.01 mm
+    }
+    if (poly.length < 3) throw new Error('Degenerate profile');
+    const wire = new oc.BRepBuilderAPI_MakeWire();
+    for (let i = 0; i < poly.length; i++) {
+      const a = poly[i], b = poly[(i + 1) % poly.length];
+      if (Math.hypot(b[0] - a[0], b[1] - a[1]) < 1e-4) continue;
+      const e = new oc.BRepBuilderAPI_MakeEdge(this._pnt(at(...a)), this._pnt(at(...b)));
+      wire.Add(e.Edge());
+      e.delete();
+    }
+    const face = new oc.BRepBuilderAPI_MakeFace(wire.Wire(), true);
+    const rev = new oc.BRepPrimAPI_MakeRevol(face.Face(), new oc.gp_Ax1(this._pnt(o), this._dir(d)), 2 * Math.PI, false);
+    const shape = rev.Shape();
+    wire.delete(); face.delete(); rev.delete();
+    return shape;
+  }
+
+  /** Box given in the frame (o; x, y, z) from min to max. */
+  box(o, x, y, z, min, max) {
+    const corner = [0, 1, 2].map((i) => o[i] + x[i] * min[0] + y[i] * min[1] + z[i] * min[2]);
+    const size = [0, 1, 2].map((k) => Math.max(max[k] - min[k], 0.01));
+    const ax = new this.oc.gp_Ax2(this._pnt(corner), this._dir(z), this._dir(x));
+    return new this.oc.BRepPrimAPI_MakeBox(ax, size[0], size[1], size[2]).Shape();
+  }
+
+  /** Solid cylinder from o along d. */
+  cylinder(o, d, r, L) {
+    return new this.oc.BRepPrimAPI_MakeCylinder(new this.oc.gp_Ax2(this._pnt(o), this._dir(d)), r, L).Shape();
+  }
+
+  /** Ring segment (bend): centre c, axis n, starting towards x, sweeping angle (rad). */
+  torus(c, n, x, R, r, angle) {
+    const ax = new this.oc.gp_Ax2(this._pnt(c), this._dir(n), this._dir(x));
+    return new this.oc.BRepPrimAPI_MakeTorus(ax, R, r, angle).Shape();
+  }
+
+  /** One solid from a wrap.js primitive list. */
+  buildPrimitives(list) {
+    const shapes = list.map((p) => {
+      switch (p.t) {
+        case 'revolve': return this.revolve(p.o, p.d, p.x, p.pts);
+        case 'box': return this.box(p.o, p.x, p.y, p.z, p.min, p.max);
+        case 'cyl': return this.cylinder(p.o, p.d, p.r, p.L);
+        case 'torus': return this.torus(p.c, p.n, p.x, p.R, p.r, p.angle);
+        default: throw new Error(`Unknown primitive ${p.t}`);
+      }
+    });
+    if (!shapes.length) throw new Error('Nothing to build');
+    const f = this.fuse(shapes);
+    return f.ok ? f.shape : this.compound(shapes);
+  }
+
   /** Place a shape with a row-major 4x4 rigid transform. */
   place(shape, m) {
     const { oc } = this;
@@ -148,7 +218,7 @@ export class Cad {
   compound(shapes) {
     const { oc } = this;
     const comp = new oc.TopoDS_Compound();
-    const b = new oc.BRep_Builder();
+    const b = new oc.TopoDS_Builder();
     b.MakeCompound(comp);
     for (const s of shapes) b.Add(comp, s);
     b.delete();

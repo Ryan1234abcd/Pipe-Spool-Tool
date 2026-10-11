@@ -1,13 +1,34 @@
 // Web Worker hosting the OpenCascade kernel. The build inlines the
 // replicad-opencascadejs glue (global `Module`) ahead of this file.
 import { Cad } from './cad.js';
+import { wrapPart } from './wrap.js';
 
 let cad = null;
 const shapes = new Map(); // part key -> TopoDS_Shape
+const wrapped = new Map(); // part key|level|res -> simplified shape
+let lastExport = null; // shape of the last build, for download / preview
 
 function errText(err) {
   if (typeof err === 'number') return 'The CAD kernel could not process this geometry';
   return err?.message || String(err);
+}
+
+/** The shape exported for a part at a level of detail. */
+function partShape(it, level, res, warnings) {
+  const shape = shapes.get(it.key);
+  if (!shape) throw new Error(`Part not loaded: ${it.key}`);
+  if (level === 'full' || !it.geom) return shape;
+  const k = `${it.key}|${level}|${res}`;
+  if (!wrapped.has(k)) {
+    try {
+      const prims = wrapPart(cad.mesh(shape), it.geom, { ods: it.ods }, level, res);
+      wrapped.set(k, cad.buildPrimitives(prims));
+    } catch (e) {
+      warnings.push(`${it.name || 'A part'} could not be simplified (${errText(e)}), so its full model is used.`);
+      wrapped.set(k, shape);
+    }
+  }
+  return wrapped.get(k);
 }
 
 const handlers = {
@@ -22,21 +43,20 @@ const handlers = {
     const shape = cad.readStep(bytes);
     shapes.set(key, shape);
     const mesh = cad.mesh(shape);
-    return { result: { mesh, circles: cad.circles(shape) }, transfer: [mesh.positions.buffer, mesh.indices.buffer] };
+    return { result: { mesh }, transfer: [mesh.positions.buffer, mesh.indices.buffer] };
   },
 
   has({ key }) { return { result: shapes.has(key) }; },
 
-  /** items: [{kind:'pipe', od, id, length, matrix} | {kind:'part', key, matrix}] */
-  export({ name, items, fuse = true }) {
+  /**
+   * Build the spool. items: [{kind:'pipe', od, id, length, matrix} | {kind:'part', key, matrix, geom, ods, name}]
+   * level: 'envelope' | 'wrap' | 'full'; res: shrink-wrap step (mm).
+   * Returns stats and a display mesh; the STEP bytes come from writeStep().
+   */
+  build({ items, level = 'wrap', res = 5, hollow = false, fuse = true }) {
     const warnings = [];
     const placed = items.map((it) => {
-      let shape;
-      if (it.kind === 'pipe') shape = cad.makePipe(it.od, it.id, it.length);
-      else {
-        shape = shapes.get(it.key);
-        if (!shape) throw new Error(`Part not loaded: ${it.key}`);
-      }
+      const shape = it.kind === 'pipe' ? cad.makePipe(it.od, level === 'full' && hollow ? it.id : 0, it.length) : partShape(it, level, res, warnings);
       return cad.place(shape, it.matrix);
     });
     if (!placed.length) throw new Error('The spool is empty');
@@ -52,11 +72,20 @@ const handlers = {
     }
     if (!result) result = placed.length === 1 ? placed[0] : cad.compound(placed);
     const solids = cad.count(result);
-    if (fuse && result && solids > 1 && !warnings.length) {
-      warnings.push(`The spool is ${solids} separate solids: some parts don't touch (check gaps, or the STEP parts themselves).`);
+    if (fuse && solids > 1 && !warnings.length) {
+      warnings.push(`The spool is ${solids} separate solids: some parts don't touch.`);
     }
-    const bytes = cad.writeStep(result, name);
-    return { result: { bytes, warnings, solids }, transfer: [bytes.buffer] };
+    lastExport = result;
+    const mesh = cad.mesh(result);
+    const faces = cad.count(result, 'TopAbs_FACE');
+    return { result: { warnings, solids, faces, mesh }, transfer: [mesh.positions.buffer, mesh.indices.buffer] };
+  },
+
+  /** STEP bytes of the last build. */
+  writeStep({ name }) {
+    if (!lastExport) throw new Error('Nothing built yet');
+    const bytes = cad.writeStep(lastExport, name);
+    return { result: { bytes }, transfer: [bytes.buffer] };
   },
 };
 

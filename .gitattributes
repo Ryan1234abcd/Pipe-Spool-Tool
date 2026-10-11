@@ -1,2 +1,3 @@
 start.bat text eol=crlf
 *.stp binary
+*.step binary

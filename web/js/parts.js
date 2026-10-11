@@ -1,11 +1,11 @@
-// Loads library parts: display mesh + circle data, cached in IndexedDB so a
-// part is only parsed by the CAD kernel once per file version.
+// Loads library parts: display mesh, cached in IndexedDB so a part is only
+// parsed by the CAD kernel once per file version.
 import { geometryFromMesh } from './viewer.js';
 import { cad } from './cad-client.js';
 import { meshGet, meshSet } from './library.js';
 
 export function createPartLoader(library) {
-  const cache = new Map(); // cache key -> Promise<{geometry, mesh, circles}>
+  const cache = new Map(); // cache key -> Promise<{geometry, mesh}>
   return {
     get(id) {
       const key = library.cacheKey(id);
