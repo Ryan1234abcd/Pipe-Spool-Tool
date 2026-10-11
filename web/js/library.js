@@ -5,6 +5,18 @@
 // folder is remembered between visits. Otherwise it is read through a normal
 // folder picker each time. STEP files are only read when a part is used.
 import { endFamily } from './joints.js';
+import { attachTransform, transformPort, applyPoint, IDENTITY } from './kinematics.js';
+
+/** Part groups for the filter in the part list (Part-Library `category`). */
+export const GROUPS = [
+  ['Elbows & bends', ['elbow']], ['Tees', ['tee']], ['Reducers', ['reducer']], ['Valves', ['valve']],
+  ['Strainers', ['strainer']], ['Flanges', ['flange']], ['Unions & couplings', ['union', 'coupling']],
+  ['Nipples & bushes', ['nipple', 'bush']], ['Caps & plugs', ['cap', 'plug']], ['Adapters', ['adapter']],
+];
+export const groupOf = (p) => (GROUPS.find(([, cats]) => cats.includes(p.category)) || ['Other'])[0];
+
+/** Text for an end, e.g. "BSP male". */
+const endText = (e) => e.end.replace(/\s*\(.*\)/, '');
 
 // ------------------------------------------------------------- IndexedDB
 let dbp = null;
@@ -79,10 +91,48 @@ export class Library {
         end: e.end,
         family: endFamily(e.end),
         flange: e.flange_od_mm || null,
+        pcd: e.pcd_mm || null,
         engage: g.ends[i].engage || 0,
         thread: e.thread || null,
       }));
       this.parts.set(id, { ...p, id, ports, centre: g.c, bbox: g.bbox, name: partName(p) });
+    }
+    this._kits();
+  }
+
+  /**
+   * RJT unions made of two halves (an RJT female × something and an RJT male ×
+   * something of the same tube size) are offered as one part: the halves come
+   * screwed together, and only their outer ends can be connected.
+   */
+  _kits() {
+    const rjt = (p, fam) => p.ports.filter((x) => x.family === fam);
+    const females = this.list().filter((p) => p.ports.length === 2 && rjt(p, 'rjtF').length === 1);
+    const males = this.list().filter((p) => p.ports.length === 2 && rjt(p, 'rjtM').length === 1);
+    for (const f of females) {
+      const fj = rjt(f, 'rjtF')[0];
+      for (const m of males) {
+        const mj = rjt(m, 'rjtM')[0];
+        if (Math.abs(fj.od - mj.od) > 0.6) continue;
+        const M = attachTransform(fj, mj, 0, 0); // male half in the female half's coordinates
+        const fo = f.ports.find((x) => x !== fj);
+        const mo = transformPort(M, m.ports.find((x) => x !== mj));
+        const ports = [{ ...fo, name: '0' }, { ...mo, name: '1' }];
+        const centre = [0, 1, 2].map((k) => (fo.origin[k] + mo.origin[k]) / 2);
+        const ends = [f.ends[f.ports.indexOf(fo)], m.ends[m.ports.indexOf(m.ports.find((x) => x !== mj))]];
+        const id = `RJTU:${f.id}+${m.id}`;
+        const sizes = [...new Set([fj.label, fo.label, mo.label])].join(' × ');
+        const bb = [f.bbox, m.bbox.map((c) => applyPoint(M, c))];
+        this.parts.set(id, {
+          id, kit: true, members: [{ part: f.id, matrix: IDENTITY() }, { part: m.id, matrix: M }],
+          category: 'union', system: 'rjt-unions', system_name: 'RJT unions',
+          type: `rjt-union-${fo.family}-${mo.family}`, type_name: `RJT Union ${endText(fo)} × ${endText(mo)}`,
+          size_label: sizes, description: `RJT union: ${f.description} + ${m.description}`,
+          search: `rjt union ${f.search || ''} ${m.search || ''}`, ends, ports, centre,
+          bbox: [[0, 1, 2].map((k) => Math.min(bb[0][0][k], bb[0][1][k], bb[1][0][k], bb[1][1][k])), [0, 1, 2].map((k) => Math.max(bb[0][0][k], bb[0][1][k], bb[1][0][k], bb[1][1][k]))],
+          name: `RJT Union ${endText(fo)} × ${endText(mo)} ${sizes}`,
+        });
+      }
     }
   }
 

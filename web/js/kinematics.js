@@ -91,6 +91,7 @@ export const START_DIRS = {
 
 /** Virtual port the root node attaches to: at `origin`, flow leaving along startDir. */
 export function rootTarget(node) {
+  if (node.target) return node.target; // e.g. the start of a parallel line
   const dir = START_DIRS[node.startDir || '+X'] || [1, 0, 0];
   const up = Math.abs(dir[2]) > 0.5 ? [1, 0, 0] : [0, 0, 1];
   return { origin: node.origin || [0, 0, 0], dir, up };
@@ -131,7 +132,9 @@ export function solve(nodes, portsOf) {
     const matrix = attachTransform(target, own, n.roll, parent ? n.gap : 0);
     const worldPorts = ports.map((p) => transformPort(matrix, p));
     const entry = { matrix, ports: worldPorts, attachPort: own.name };
-    if (parent && target.od > 0 && own.od > 0 && Math.abs(target.od - own.od) > OD_TOLERANCE) {
+    // flanged joints match by drilling, not pipe OD (joints.js decides those)
+    const byOd = ![target.family, own.family].some((f) => ['flange', 'wafer', 'start'].includes(f));
+    if (parent && byOd && target.od > 0 && own.od > 0 && Math.abs(target.od - own.od) > OD_TOLERANCE) {
       errors.push({ id: n.id, message: `Size mismatch: Ø${own.od} joined to Ø${target.od}`, kind: 'size' });
     }
     placed.set(n.id, entry);

@@ -104,7 +104,6 @@ export function locateEnds(part, circles, mesh) {
   const R = Math.max(...sizes.map((s) => s.outer)) * 0.55;
   const { lines, tol } = axisLines(circles, mesh.bbox, minRef * 0.3);
   const P = mesh.positions;
-  // valves and strainers may have a disc or plate right at the end, so no bore test
   const valveLike = /valve|strainer/.test(part.category);
   const eccentric = /eccentric/.test(part.type || '');
 
@@ -143,27 +142,67 @@ export function locateEnds(part, circles, mesh) {
       // the face outline should sit around the axis, not to one side of it
       const offCentre = Math.hypot(cu, cv) / Math.max(rFace, minRef / 2);
       const dias = [2 * rFace];
+      // outline just behind the face (past an end chamfer): a male thread or a weld end
+      const near = Math.max(2, 0.6 * rFace);
+      let rNear = 0;
+      for (let i = 0; i < P.length; i += 3) {
+        const off = [P[i] - origin[0], P[i + 1] - origin[1], P[i + 2] - origin[2]];
+        const h = dot(off, d);
+        if (h < -near || h > tol) continue;
+        const r = len(sub(off, scale(d, h)));
+        if (r < R && r > rNear) rNear = r;
+      }
+      // holes in the face: circles on this axis near the face, inside the outline
+      const holes = [];
       for (const c of circles) {
         if (c.span < 2 * Math.PI - 0.05 || Math.abs(Math.abs(dot(norm(c.axis), d)) - 1) > 1e-3) continue;
         const off = sub(c.centre, origin);
         const h = dot(off, d);
-        if (len(sub(off, scale(d, h))) < tol && h > -Math.max(3, 0.25 * R)) dias.push(2 * c.radius);
+        if (len(sub(off, scale(d, h))) >= tol || h < -Math.max(3, 0.25 * R)) continue;
+        dias.push(2 * c.radius);
+        if (2 * c.radius < 0.97 * 2 * Math.max(rNear, rFace)) holes.push({ dia: 2 * c.radius, depth: -h });
       }
-      const bore = valveLike ? Infinity : rayHit(mesh, add(origin, scale(d, 0.01)), scale(d, -1));
-      cands.push({ origin, dir: d, dias, bore, offCentre, line: l, circleLine: l.dias.some((x) => x > 0) });
+      const bore = rayHit(mesh, add(origin, scale(d, 0.01)), scale(d, -1));
+      // no circle edges (threads modelled as splines): the face's inner rim is the hole
+      if (!holes.length && bore > 0.1 * minRef) {
+        let rIn = Infinity;
+        for (let i = 0; i < P.length; i += 3) {
+          const off = [P[i] - origin[0], P[i + 1] - origin[1], P[i + 2] - origin[2]];
+          const h = dot(off, d);
+          if (h < -Math.max(tol, 0.5) || h > tol) continue;
+          const r = len(sub(off, scale(d, h)));
+          if (r < rIn) rIn = r;
+        }
+        if (rIn > 0.2 * rFace && rIn < 0.97 * rFace) holes.push({ dia: 2 * rIn, depth: 0 });
+      }
+      cands.push({ origin, dir: d, dias, outline: 2 * Math.max(rNear, rFace), holes, bore, offCentre, line: l, circleLine: l.dias.some((x) => x > 0) });
     }
   }
 
   // cost of end e on candidate c
+  const fit = (x, r) => (x > 0 && r > 0 ? Math.abs(Math.log(x / r)) : Infinity);
   const sizeCost = (e, c) => {
     const s = sizes[e];
+    const end = ends[e];
     let best = Infinity;
-    for (const x of c.dias) for (const r of s.refs) if (x > 0 && r > 0) best = Math.min(best, Math.abs(Math.log(x / r)));
-    return Math.max(0, best - s.slack * 0.3) * 4 + (best > s.slack ? 2 : 0);
+    if (/BSP female/.test(end.end)) {
+      // a female thread is a hole in the face (an outline that size is a male thread)
+      const th = end.thread_od_mm || end.od_mm;
+      for (const h of c.holes) best = Math.min(best, fit(h.dia, th) + 0.01 * h.depth);
+      best = Math.min(best, fit(c.outline, th) + 0.25);
+    } else if (/BSP male/.test(end.end)) {
+      best = fit(c.outline, end.thread_od_mm || end.od_mm); // the thread is the outline
+    } else {
+      for (const x of [...c.dias, c.outline]) for (const r of s.refs) best = Math.min(best, fit(x, r));
+    }
+    // the closer fit wins even inside the slack (a 20.96 thread vs a 21.3 pipe end)
+    return Math.max(0, best - s.slack * 0.3) * 4 + (best > s.slack ? 2 : 0) + 3 * Math.min(best, 1);
   };
   const boreCost = (e, c) => {
     const od = ends[e].od_mm || minRef;
     if (/BSP male/.test(ends[e].end) && ends.length === 1) return 0; // plugs are solid
+    // valves may have a disc or plate near the face: a shallower bore will do
+    if (valveLike) return c.bore < 0.2 * od ? 1.5 : 0;
     return c.bore < 0.25 * od ? 2.5 : 0;
   };
   const per = ends.map((_, e) => cands.map((c, i) => ({ i, cost: sizeCost(e, c) + boreCost(e, c) + 4 * c.offCentre + (c.circleLine ? 0 : 1.5) }))
@@ -213,7 +252,10 @@ export function locateEnds(part, circles, mesh) {
     }
   };
   pick(0, new Set(), [], 0);
-  if (process?.env?.ENDS_DEBUG) console.log(cands.map((c, i) => `${i} o${c.origin.map((v) => v.toFixed(1))} d${c.dir.map((v) => v.toFixed(2))} dias${c.dias.map((v) => v.toFixed(1))} bore${c.bore.toFixed(1)} off${c.offCentre.toFixed(2)}`).join("\n"), per.map((p) => p.map((q) => `${q.i}:${q.cost.toFixed(2)}`).join(" ")));
+  if (process?.env?.ENDS_DEBUG) {
+    console.log(cands.map((c, i) => `${i} o${c.origin.map((v) => v.toFixed(1))} d${c.dir.map((v) => v.toFixed(2))} outline${c.outline.toFixed(1)} holes${c.holes.map((h) => h.dia.toFixed(1)).join('/')} bore${c.bore.toFixed(1)} off${c.offCentre.toFixed(2)}`).join('\n'));
+    console.log(per.map((p) => p.map((q) => `${q.i}:${q.cost.toFixed(2)}`).join(' ')));
+  }
   if (!best) return null;
 
   const notes = [];

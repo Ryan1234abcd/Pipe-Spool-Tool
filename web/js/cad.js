@@ -36,6 +36,8 @@ export class Cad {
     oc.Interface_Static.SetCVal('write.step.schema', 'AP214IS');
     oc.Interface_Static.SetCVal('write.step.unit', 'MM');
     oc.Interface_Static.SetCVal('write.step.product.name', name);
+    // no 2D copies of every edge on its faces (they more than double the file)
+    oc.Interface_Static.SetIVal('write.surfacecurve.mode', 0);
     const writer = new oc.STEPControl_Writer();
     writer.Transfer(shape, oc.STEPControl_StepModelType.STEPControl_AsIs, true, this._range());
     const path = this._tmp('stp');
@@ -44,7 +46,7 @@ export class Cad {
     if (String(status) !== 'IFSelect_RetDone') throw new Error('STEP export failed');
     const data = oc.FS.readFile(path);
     oc.FS.unlink(path);
-    return data;
+    return compactStep(data);
   }
 
   /** Triangulate for display: {positions, indices, bbox}. */
@@ -190,6 +192,118 @@ export class Cad {
     return new this.oc.BRepPrimAPI_MakeTorus(ax, R, r, angle).Shape();
   }
 
+  /** The solids in a shape (the shape itself if it has none). */
+  solids(shape) {
+    const { oc } = this;
+    const out = [];
+    const exp = new oc.TopExp_Explorer(shape, oc.TopAbs_ShapeEnum.TopAbs_SOLID, oc.TopAbs_ShapeEnum.TopAbs_SHAPE);
+    for (; exp.More(); exp.Next()) out.push(oc.TopoDS.Solid(exp.Current()));
+    exp.delete();
+    return out.length ? out : [shape];
+  }
+
+  /**
+   * Fillers for round holes narrower than maxR: cylinders that plug them
+   * (bolt holes, tapped holes, drain holes). Only whole holes, not the
+   * concave fillets in inside corners. Returns wrap.js 'cyl' primitives.
+   */
+  holeFillers(shape, maxR) {
+    const { oc } = this;
+    const out = [];
+    const exp = new oc.TopExp_Explorer(shape, oc.TopAbs_ShapeEnum.TopAbs_FACE, oc.TopAbs_ShapeEnum.TopAbs_SHAPE);
+    for (; exp.More(); exp.Next()) {
+      const face = oc.TopoDS.Face(exp.Current());
+      if (String(face.Orientation()) !== 'TopAbs_REVERSED') continue; // material outside the cylinder = a hole
+      const ad = new oc.BRepAdaptor_Surface(face, true);
+      try {
+        if (String(ad.GetType()) !== 'GeomAbs_Cylinder') continue;
+        const cyl = ad.Cylinder();
+        const r = cyl.Radius();
+        if (r > maxR || ad.LastUParameter() - ad.FirstUParameter() < 1.8 * Math.PI) continue;
+        const ax = cyl.Axis();
+        const o = [ax.Location().X(), ax.Location().Y(), ax.Location().Z()];
+        const d = [ax.Direction().X(), ax.Direction().Y(), ax.Direction().Z()];
+        // axial extent from the face's triangulation
+        const loc = new oc.TopLoc_Location();
+        const tri = oc.BRep_Tool.Triangulation(face, loc, 0);
+        if (!tri || (tri.IsNull && tri.IsNull())) { loc.delete(); continue; }
+        const trsf = loc.Transformation();
+        let h0 = Infinity, h1 = -Infinity;
+        for (let i = 1; i <= tri.NbNodes(); i++) {
+          const q = tri.Node(i).Transformed(trsf);
+          const h = (q.X() - o[0]) * d[0] + (q.Y() - o[1]) * d[1] + (q.Z() - o[2]) * d[2];
+          q.delete();
+          if (h < h0) h0 = h;
+          if (h > h1) h1 = h;
+        }
+        loc.delete();
+        if (h1 - h0 < 1e-3) continue;
+        out.push({ t: 'cyl', o: o.map((v, k) => v + d[k] * h0), d, r: r * 1.002, L: h1 - h0 });
+      } finally { ad.delete(); }
+    }
+    exp.delete();
+    return out;
+  }
+
+  /** Keep only the outer skin of each solid (internal voids are dropped). */
+  outerSkin(shape) {
+    const { oc } = this;
+    const solids = this.solids(shape);
+    const out = [];
+    for (const so of solids) {
+      const shells = [];
+      const exp = new oc.TopExp_Explorer(so, oc.TopAbs_ShapeEnum.TopAbs_SHELL, oc.TopAbs_ShapeEnum.TopAbs_SHAPE);
+      for (; exp.More(); exp.Next()) shells.push(oc.TopoDS.Shell(exp.Current()));
+      exp.delete();
+      if (shells.length < 2) { out.push(so); continue; }
+      const size = (sh) => { const b = this.bbox(sh); return Math.hypot(b[1][0] - b[0][0], b[1][1] - b[0][1], b[1][2] - b[0][2]); };
+      shells.sort((a, b) => size(b) - size(a));
+      const mk = new oc.BRepBuilderAPI_MakeSolid(shells[0]);
+      out.push(mk.Solid());
+      mk.delete();
+    }
+    return out.length === 1 ? out[0] : this.compound(out);
+  }
+
+  /**
+   * Shrink-wrap one part: its real outer surfaces, with hidden inner pieces
+   * dropped, bores and threads filled, holes narrower than `res` plugged and
+   * loose bits smaller than `res` left out, merged into one solid.
+   * @param prims  filler primitives from wrap.js boreFillers()
+   * @param keep   which of this.solids(shape) to keep (wrap.js visibleSolids)
+   */
+  shrinkWrap(shape, keep, prims, res) {
+    const diag = (x) => { const b = this.bbox(x); return Math.hypot(b[1][0] - b[0][0], b[1][1] - b[0][1], b[1][2] - b[0][2]); };
+    // hidden pieces, empty ones (springs drawn as surfaces) and bits smaller than res go
+    const solids = this.solids(shape).filter((so, i) => keep[i] && this.volume(so) > 1e-3 && diag(so) >= res)
+      .sort((a, b) => this.volume(b) - this.volume(a));
+    if (!solids.length) return null;
+    const holes = solids.flatMap((so) => this.holeFillers(so, res / 2));
+    const fill = [...prims, ...holes].map((p) => this.buildPrimitives([p]));
+    let f = this.fuse([...solids, ...fill]);
+    let result;
+    if (f.ok) result = f.shape;
+    else {
+      // merge one piece at a time, leaving out any piece that breaks the merge
+      let acc = solids[0];
+      const apart = [];
+      for (const piece of [...solids.slice(1), ...fill]) {
+        f = this.fuse([acc, piece]);
+        if (f.ok) acc = f.shape;
+        else if (solids.includes(piece)) apart.push(piece);
+      }
+      result = apart.length ? this.compound([acc, ...apart]) : acc;
+    }
+    const skin = this.outerSkin(result);
+    try {
+      const up = new this.oc.ShapeUpgrade_UnifySameDomain(skin, true, true, false);
+      up.Build();
+      const r = up.Shape();
+      up.delete();
+      return this.isValid(r) ? r : skin;
+    } catch { return skin; }
+  }
+
   /** One solid from a wrap.js primitive list. */
   buildPrimitives(list) {
     const shapes = list.map((p) => {
@@ -274,6 +388,27 @@ export class Cad {
     p.delete();
     return v;
   }
+}
+
+/**
+ * Shorter STEP text: numbers to 7 significant figures (0.001 mm on a 1 m part)
+ * and one line per entity. Typically 10–15% smaller.
+ */
+export function compactStep(bytes) {
+  const text = new TextDecoder().decode(bytes);
+  const i = text.indexOf('DATA;');
+  if (i < 0) return bytes;
+  const body = text.slice(i)
+    .replace(/(['])(?:[^']|'')*\1|-?\d+\.\d*(?:E[-+]?\d+)?/g, (m) => {
+      if (m[0] === "'") return m; // leave strings alone
+      const v = Number(m);
+      if (!Number.isFinite(v)) return m;
+      if (Math.abs(v) < 1e-12) return '0.';
+      const str = String(Number(v.toPrecision(7)));
+      return /[.eE]/.test(str) ? str.replace('e', 'E') : `${str}.`;
+    })
+    .replace(/\r?\n[ \t]+/g, ' ');
+  return new TextEncoder().encode(text.slice(0, i) + body);
 }
 
 export function boundsOf(positions) {

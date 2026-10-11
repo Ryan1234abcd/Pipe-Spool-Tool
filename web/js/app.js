@@ -6,9 +6,9 @@
 import * as THREE from 'three';
 import { CSS2DObject } from 'three/addons/CSS2DRenderer.js';
 import { Viewer, toMatrix4, geometryFromMesh } from './viewer.js';
-import { solve, openPorts, pipePorts, applyPoint } from './kinematics.js';
+import { solve, openPorts, pipePorts, applyPoint, mul, rotate, cross, defaultUp } from './kinematics.js';
 import { joinOptions, pipeFor, centreToEnd, cutLength, dimFromCut } from './joints.js';
-import { Library, kvGet, kvSet } from './library.js';
+import { Library, kvGet, kvSet, GROUPS, groupOf } from './library.js';
 import { createPartLoader } from './parts.js';
 import { startCad, cad } from './cad-client.js';
 import { toast, esc, ask, saveFile } from './ui.js';
@@ -16,10 +16,14 @@ import { toast, esc, ask, saveFile } from './ui.js';
 const COLORS = { pipe: 0x9aabbd, part: 0xd38a3a, fitting: 0x8195ab };
 const SPOOLS_KEY = 'pipe-spool-tool.spools.v2';
 const DEFAULT_CUT = 150;
+const SHARED_SYSTEMS = ['valves', 'adapters', 'rjt-unions']; // offered with every pipe type
+let hiddenGroups = new Set();
+try { hiddenGroups = new Set(JSON.parse(localStorage.getItem('pipe-spool-tool.hiddenGroups')) || []); } catch { /* none */ }
 
 // ---------------------------------------------------------------------- state
 const state = {
   name: 'Spool-01',
+  pipeType: 'pipe-sch10s', // Part-Library system the spool starts in
   startSize: null,
   nodes: [],
   selected: null,
@@ -64,11 +68,16 @@ const isFitting = (p) => !/valve|strainer/.test(p?.category || '');
 function nodeLabel(n) {
   if (!n) return '?';
   if (n.type === 'pipe') return `Pipe ${n.label}`;
+  if (n.type === 'start') return `Parallel line ${n.label}`;
   return partOf(n)?.name || n.part;
 }
 
 /** Local ports of a node (part ports from geometry.json, or the pipe's two ends). */
 function localPorts(n) {
+  if (n.type === 'start') {
+    const base = { origin: [0, 0, 0], up: [0, 0, 1], od: n.od, label: n.label };
+    return [{ ...base, name: 'in', dir: [-1, 0, 0], family: 'none' }, { ...base, name: 'out', dir: [1, 0, 0], family: 'start', wall: n.wall, threaded: n.threaded }];
+  }
   if (n.type === 'pipe') {
     return pipePorts(n.od, Math.max(n.cut || 0, 0)).map((p) => ({ ...p, family: 'pipe', label: n.label, threaded: !!n.threaded }));
   }
@@ -118,7 +127,16 @@ async function rebuild() {
     n.cut = round(cutLength(n.dim, a, b), 2);
   }
   for (const n of state.nodes) n.gap = jointGap(n);
-  solved = solve(state.nodes, localPorts);
+  // parallel lines start from a point beside their reference pipe, so place
+  // the rest first and then them (a few passes for lines off parallel lines)
+  const starts = state.nodes.filter((n) => n.type === 'start');
+  for (const n of starts) delete n.target;
+  solved = solve(state.nodes.filter((n) => !starts.includes(n) && !hangsOff(n, starts)), localPorts);
+  for (let pass = 0; pass < 4 && starts.length; pass++) {
+    for (const n of starts) n.target = startTarget(n) || undefined;
+    solved = solve(state.nodes.filter((n) => n.type !== 'start' || n.target ? !hangsOffUnplaced(n) : false), localPorts);
+  }
+  for (const n of starts) if (!n.target) solved.errors.push({ id: n.id, message: 'Its reference pipe is gone' });
   for (const n of state.nodes) {
     if (n.type === 'pipe' && n.cut < 0) solved.errors.push({ id: n.id, message: `Dimension too short by ${round(-n.cut)} mm` });
   }
@@ -133,12 +151,37 @@ async function rebuild() {
   renderStatus();
   renderPartList();
   // load display meshes of parts not seen yet, then redraw
-  const missing = [...new Set(state.nodes.filter((n) => n.type === 'part' && !meshes.has(n.part)).map((n) => n.part))];
+  const missing = [...new Set(state.nodes.filter((n) => n.type === 'part').flatMap((n) => membersOf(partOf(n)).map((m) => m.part)))].filter((id) => !meshes.has(id));
   if (!missing.length) return;
   await Promise.all(missing.map(async (id) => {
     try { meshes.set(id, (await parts.get(id)).geometry); } catch (e) { toast(`${library.parts.get(id)?.name || id}: ${e.message}`, true); }
   }));
   if (seq === buildSeq) draw();
+}
+
+/** Is n (or something it hangs off) one of the given roots? */
+function hangsOff(n, roots) {
+  for (let x = n; x; x = nodeById(x.parent)) if (roots.includes(x)) return true;
+  return false;
+}
+function hangsOffUnplaced(n) {
+  for (let x = n; x; x = nodeById(x.parent)) if (x.type === 'start' && !x.target) return true;
+  return false;
+}
+
+/** World start of a parallel line: beside its reference pipe at the centre distance. */
+function startTarget(n) {
+  const e = solved.placed.get(n.ref);
+  if (!e) return null;
+  const a = e.ports[0].origin, b = e.ports[1].origin;
+  let u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+  const L = Math.hypot(...u);
+  u = L > 1e-6 ? u.map((v) => v / L) : e.ports[1].dir;
+  const v = rotate(defaultUp(u), u, ((Number(n.angle) || 0) * Math.PI) / 180);
+  const along = Number(n.along) || 0, dist = Number(n.dist) || 0;
+  const origin = [0, 1, 2].map((k) => a[k] + u[k] * along + v[k] * dist);
+  const dir = n.reverse ? u.map((x) => -x) : u;
+  return { origin, dir, up: v, from: [0, 1, 2].map((k) => a[k] + u[k] * along) };
 }
 
 function portByKey(key) {
@@ -169,8 +212,18 @@ function draw() {
         g.rotateZ(-Math.PI / 2).translate(L / 2, 0, 0);
         mesh = new THREE.Mesh(g, material('pipe', sel));
       }
-    } else if (meshes.has(n.part)) {
-      mesh = new THREE.Mesh(meshes.get(n.part), material(isFitting(partOf(n)) ? 'fitting' : 'part', sel));
+    } else if (n.type === 'part') {
+      // a kit (RJT union) is drawn as its halves
+      for (const m of membersOf(partOf(n))) {
+        if (!meshes.has(m.part)) continue;
+        const mm = new THREE.Mesh(meshes.get(m.part), material(isFitting(partOf(n)) ? 'fitting' : 'part', sel));
+        mm.matrixAutoUpdate = false;
+        mm.matrix.copy(toMatrix4(mul(e.matrix, m.matrix)));
+        mm.userData.nodeId = n.id;
+        viewer.content.add(mm);
+      }
+    } else if (n.type === 'start' && n.target) {
+      drawStart(n);
     }
     if (mesh) {
       mesh.matrixAutoUpdate = false;
@@ -188,6 +241,33 @@ function draw() {
   const shown = viewer.content.children.some((c) => c.isMesh && c.userData.nodeId);
   if (shown && (needFit || offScreen())) { viewer.fit(); needFit = false; }
   viewer.render();
+}
+
+/** The STEP parts a library part is made of (itself, or a kit's halves). */
+function membersOf(p) {
+  if (!p) return [];
+  return p.members || [{ part: p.id, matrix: [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]] }];
+}
+
+/** Parallel line: dashed centre-distance line from its reference pipe, with the value. */
+function drawStart(n) {
+  const t = n.target;
+  const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(...t.from), new THREE.Vector3(...t.origin)]);
+  const line = new THREE.Line(geo, new THREE.LineDashedMaterial({ color: 0x2f6fb3, dashSize: 8, gapSize: 5, depthTest: false }));
+  line.computeLineDistances();
+  line.renderOrder = 5;
+  viewer.content.add(line);
+  const sph = new THREE.Mesh(new THREE.SphereGeometry(Math.max(4, (n.od || 50) * 0.12), 12, 8), new THREE.MeshBasicMaterial({ color: n.id === state.selected ? 0xe8792b : 0x2f6fb3, depthTest: false }));
+  sph.position.set(...t.origin);
+  sph.renderOrder = 10;
+  sph.userData.nodeId = n.id;
+  viewer.content.add(sph);
+  if ($('chkDims').checked) {
+    const el = addLabel('dim-label', `C-C ${round(Number(n.dist) || 0)}`, t.from.map((v, i) => (v + t.origin[i]) / 2));
+    el.dataset.node = n.id;
+    el.title = 'Centre distance to the reference pipe – click to edit';
+    el.classList.toggle('sel', n.id === state.selected);
+  }
 }
 
 /** Is the newest part outside the view? (then the view is refitted) */
@@ -334,9 +414,10 @@ function addPart(id) {
 function addPipe() {
   const t = activeTarget();
   if (!t || t.port.family === 'pipe') { toast('Pick an open end of a part first.', true); return; }
-  if (!(t.port.family === 'weld' || t.port.family === 'bspF')) { toast('That end takes a part, not a pipe.', true); return; }
+  if (!['weld', 'bspF', 'start'].includes(t.port.family)) { toast('That end takes a part, not a pipe.', true); return; }
   commit(() => {
-    const spec = pipeFor(t.port);
+    const spec = t.port.family === 'start'
+      ? { od: t.n.od, wall: t.n.wall, label: t.n.label, threaded: !!t.n.threaded } : pipeFor(t.port);
     const a = t.n.type === 'part' ? sideOf(t.n, t.port.name) : null;
     const pipe = { id: newId(), type: 'pipe', ...spec, port: 'A', parent: t.nodeId, parentPort: t.port.name, roll: 0, dim: defaultDim(a, null) };
     state.nodes.push(pipe);
@@ -345,12 +426,28 @@ function addPipe() {
   });
 }
 
+/** Start a line parallel to a pipe, at a centre distance from it. */
+function addParallel(pipeId) {
+  const p = nodeById(pipeId);
+  if (!p || p.type !== 'pipe') return;
+  commit(() => {
+    const n = { id: newId(), type: 'start', port: 'in', ref: p.id, dist: Math.ceil((p.od * 3) / 50) * 50, angle: 0, along: 0, reverse: false,
+      od: p.od, wall: p.wall, label: p.label, threaded: !!p.threaded };
+    state.nodes.push(n);
+    state.selected = n.id;
+    state.active = `${n.id}:out`;
+  });
+}
+
 function removeSubtree(id) {
   const kill = new Set([id]);
   let grew = true;
   while (grew) {
     grew = false;
-    for (const n of state.nodes) if (n.parent && kill.has(n.parent) && !kill.has(n.id)) { kill.add(n.id); grew = true; }
+    for (const n of state.nodes) {
+      // what hangs off it, and parallel lines measured from it
+      if (!kill.has(n.id) && ((n.parent && kill.has(n.parent)) || (n.type === 'start' && kill.has(n.ref)))) { kill.add(n.id); grew = true; }
+    }
   }
   state.nodes = state.nodes.filter((n) => !kill.has(n.id));
 }
@@ -370,6 +467,35 @@ function deleteNode(id) {
 
 function rollNode(id, delta) {
   commit(() => { const n = nodeById(id); n.roll = (((Number(n.roll) || 0) + delta) % 360 + 540) % 360 - 180; });
+}
+
+/** Ends of a placed part it could be attached by, where it is. */
+function attachOptions(n) {
+  const part = partOf(n);
+  if (!part) return [];
+  if (!n.parent) return part.ports.map((p) => p.name);
+  const target = localPorts(nodeById(n.parent))?.find((p) => p.name === n.parentPort);
+  return target ? joinOptions(target, part.ports).map((o) => o.port.name) : [];
+}
+
+/** Attach a part by another of its ends; what was on that end moves to the old one. */
+function setAttach(id, name) {
+  const n = nodeById(id);
+  if (!n || n.port === name) return;
+  commit(() => {
+    for (const c of childrenOf(n.id)) if (c.parentPort === name) c.parentPort = n.port;
+    if (state.active === `${n.id}:${name}`) state.active = `${n.id}:${n.port}`;
+    n.port = name;
+  });
+}
+
+/** Describe an end of a part: "Branch – 40NB butt-weld". */
+function portText(part, port) {
+  const e = part.ends?.[Number(port.name)] || {};
+  const isTee = part.category === 'tee' && part.ports.length === 3;
+  const runs = isTee ? part.ends.map((x, i) => (x.role === 'branch' ? -1 : i)).filter((i) => i >= 0) : [];
+  const role = isTee ? (e.role === 'branch' ? 'Branch' : `Run end ${runs.indexOf(Number(port.name)) + 1}`) : `End ${Number(port.name) + 1}`;
+  return `${role} – ${port.label || ''} ${(e.end || port.family || '').replace(/\s*\(.*\)/, '')}`.trim();
 }
 
 /** Attach the part by its next end that fits the same joint. */
@@ -404,10 +530,20 @@ function setDim(id, mode, value) {
 let labelOd = new Map(); // size label -> OD, for sorting
 const sizeOrder = (label) => labelOd.get(label) || 0;
 
+/** Pipe types: the Part-Library systems that are pipe or tube (not valves or adapters). */
+function pipeTypes() {
+  return library.systems.filter((sy) => !SHARED_SYSTEMS.includes(sy.system) && library.list().some((p) => p.system === sy.system));
+}
+const inPipeType = (p) => state.pipeType === 'any' || p.system === state.pipeType;
+
 function renderStartSizes() {
   labelOd = new Map();
   for (const p of library.parts.values()) for (const e of p.ports) if (!labelOd.has(e.label)) labelOd.set(e.label, e.od);
-  const labels = [...new Set(library.list().flatMap((p) => p.ports.map((e) => e.label)))].sort((a, b) => sizeOrder(a) - sizeOrder(b));
+  const types = pipeTypes();
+  if (state.pipeType !== 'any' && !types.some((t) => t.system === state.pipeType)) state.pipeType = types[0]?.system || 'any';
+  $('selType').innerHTML = types.map((t) => `<option value="${esc(t.system)}" ${t.system === state.pipeType ? 'selected' : ''}>${esc(t.name)}</option>`).join('')
+    + `<option value="any" ${state.pipeType === 'any' ? 'selected' : ''}>Any</option>`;
+  const labels = [...new Set(library.list().filter(inPipeType).flatMap((p) => p.ports.map((e) => e.label)))].sort((a, b) => sizeOrder(a) - sizeOrder(b));
   if (!labels.includes(state.startSize)) state.startSize = labels.find((l) => /50NB/.test(l)) || labels[0] || null;
   $('selStart').innerHTML = labels.map((l) => `<option ${l === state.startSize ? 'selected' : ''}>${esc(l)}</option>`).join('');
 }
@@ -417,6 +553,7 @@ const FAMILY_TEXT = { weld: 'weld end', bspF: 'BSP female', bspM: 'BSP male', rj
 function renderPartList() {
   const empty = !state.nodes.length;
   $('startSizeRow').hidden = !empty;
+  $('pipeTypeRow').hidden = !empty;
   const t = empty ? null : activeTarget();
   $('nextEnd').innerHTML = empty
     ? '<span class="hint">Pick the first part. The orange end shows where the next one goes.</span>'
@@ -424,23 +561,31 @@ function renderPartList() {
       : '<span class="hint">No open end selected – click a blue marker in the view.</span>';
   const q = $('partSearch').value.toLowerCase().trim();
   const words = q.split(/\s+/).filter(Boolean);
-  const list = (empty || t) ? library.list().filter((p) => optionsFor(p).length
+  const fits = (empty || t) ? library.list().filter((p) => optionsFor(p).length
+    && (!empty || inPipeType(p) || SHARED_SYSTEMS.includes(p.system))
     && words.every((w) => `${p.search || ''} ${p.name} ${p.id}`.toLowerCase().includes(w))) : [];
-  const groups = new Map();
+  // filter chips: one per part group that has something fitting here
+  const counts = new Map();
+  for (const p of fits) counts.set(groupOf(p), (counts.get(groupOf(p)) || 0) + 1);
+  $('groupChips').innerHTML = GROUPS.map(([g]) => g).filter((g) => counts.has(g))
+    .map((g) => `<button class="chip ${hiddenGroups.has(g) ? '' : 'on'}" data-group="${esc(g)}" aria-pressed="${!hiddenGroups.has(g)}" title="Show or hide ${esc(g.toLowerCase())}">${esc(g)} <span>${counts.get(g)}</span></button>`).join('');
+  const list = fits.filter((p) => !hiddenGroups.has(groupOf(p)));
+  const groups = new Map(GROUPS.map(([g]) => [g, []]));
   for (const p of list) {
-    const g = p.system_name || p.system;
+    const g = groupOf(p);
     if (!groups.has(g)) groups.set(g, []);
     groups.get(g).push(p);
   }
   let html = '';
-  for (const [g, ps] of [...groups]) {
+  for (const [g, ps] of [...groups].filter(([, ps]) => ps.length)) {
     html += `<div class="cat">${esc(g)}</div>`;
     for (const p of ps.sort((a, b) => (a.type_name || '').localeCompare(b.type_name || '') || (a.ports[0]?.od || 0) - (b.ports[0]?.od || 0) || a.id.localeCompare(b.id))) {
       const via = !empty && optionsFor(p)[0].viaPipe ? '<span class="badge ok" title="Joined with a pipe">+ pipe</span>' : '';
-      html += `<div class="item" data-part="${esc(p.id)}" title="${esc(`${p.id} – ${p.description}`)}">${esc(p.type_name || p.type)}<span class="meta">${via} ${esc(p.size_label || '')}</span></div>`;
+      const twin = ps.some((q) => q !== p && q.type_name === p.type_name && q.size_label === p.size_label);
+      html += `<div class="item" data-part="${esc(p.id)}" title="${esc(`${p.id} – ${p.description}`)}">${esc(p.type_name || p.type)}${twin ? ` <span class="hint">${esc(p.kit ? '' : p.id)}</span>` : ''}<span class="meta">${via} ${esc(p.size_label || '')}</span></div>`;
     }
   }
-  $('partList').innerHTML = html || `<p class="hint">${library.parts.size ? 'Nothing in the library fits here.' : 'Open your Part-Library folder to see parts.'}</p>`;
+  $('partList').innerHTML = html || `<p class="hint">${!library.parts.size ? 'Open your Part-Library folder to see parts.' : fits.length ? 'All the parts that fit here are hidden – turn a group on above.' : 'Nothing in the library fits here.'}</p>`;
 }
 
 function renderTree() {
@@ -448,8 +593,8 @@ function renderTree() {
   let html = '';
   const walk = (parent, depth) => {
     for (const n of state.nodes.filter((x) => (x.parent || null) === parent)) {
-      const extra = n.type === 'pipe' ? `${round(n.cut)} mm` : (partOf(n)?.size_label || '');
-      const name = n.type === 'pipe' ? 'Pipe' : (partOf(n)?.type_name || n.part);
+      const extra = n.type === 'pipe' ? `${round(n.cut)} mm` : n.type === 'start' ? `C-C ${round(Number(n.dist) || 0)}` : (partOf(n)?.size_label || '');
+      const name = n.type === 'pipe' ? 'Pipe' : n.type === 'start' ? 'Parallel line' : (partOf(n)?.type_name || n.part);
       const cls = ['item', n.id === state.selected ? 'sel' : '', errById.has(n.id) ? 'err' : ''].join(' ');
       html += `<div class="${cls}" data-node="${n.id}" style="padding-left:${6 + depth * 10}px" title="${esc(errById.get(n.id) || '')}">`
         + `${esc(n.tag ? `${n.tag} – ` : '')}${esc(name)}<span class="meta">${esc(extra)}</span></div>`;
@@ -488,6 +633,7 @@ function renderProps() {
       </div>
       <div class="btns">
         <button id="propClose" title="No pipe: the parts weld or screw straight together">Close-coupled</button>
+        <button id="propPar" title="Start a new line parallel to this pipe, at a centre distance">Parallel line…</button>
         <button id="propDel" class="danger" title="Delete this pipe and everything beyond it (Del)">Delete</button>
       </div>
       ${err ? `<div class="msg">${err}</div>` : ''}`;
@@ -500,16 +646,48 @@ function renderProps() {
       setDim(n.id, mode, round(dimFromCut(mode, Math.max(n.cut, 0), a, b)));
     };
     $('propClose').onclick = () => setDim(n.id, 'cut', 0);
+    $('propPar').onclick = () => addParallel(n.id);
     $('propDel').onclick = () => deleteNode(n.id);
     setTimeout(() => { const f = $('propDim'); if (f && document.activeElement === document.body) { f.focus(); f.select(); } }, 30);
     return;
   }
+  if (n.type === 'start') {
+    el.innerHTML = `
+      <h4>Parallel line ${esc(n.label)}</h4>
+      <div class="hint">Starts beside ${esc(nodeLabel(nodeById(n.ref)))}. Add parts or a pipe (<kbd>P</kbd>) on its orange end.</div>
+      <div class="grid">
+        <span>Centre dist.</span><input id="parDist" type="number" step="5" min="0" value="${round(Number(n.dist) || 0)}" aria-label="Centre distance in mm">
+        <span>Side</span><div class="rollbtns">
+          <button id="parRotM" title="Turn the side −90° about the pipe">⟲ 90°</button>
+          <button id="parRotP" title="Turn the side +90° about the pipe">⟳ 90°</button>
+          <input id="parAngle" type="number" step="15" value="${Number(n.angle) || 0}" aria-label="Side angle in degrees">°
+        </div>
+        <span>Along</span><input id="parAlong" type="number" step="10" value="${round(Number(n.along) || 0)}" title="Distance along the reference pipe from its start" aria-label="Offset along the pipe in mm">
+        <span>Direction</span><label class="inline"><input type="checkbox" id="parRev" ${n.reverse ? 'checked' : ''}> Run the other way</label>
+      </div>
+      <div class="btns"><button id="propDel" class="danger" title="Delete this line and everything on it (Del)">Delete</button></div>
+      ${err ? `<div class="msg">${err}</div>` : ''}`;
+    const set = (k, v) => commit(() => { n[k] = v; });
+    $('parDist').onchange = (e) => set('dist', Math.max(0, Number(e.target.value) || 0));
+    $('parDist').onkeydown = (e) => { if (e.key === 'Enter') e.target.blur(); };
+    $('parAngle').onchange = (e) => set('angle', Number(e.target.value) || 0);
+    $('parRotM').onclick = () => set('angle', ((Number(n.angle) || 0) - 90 + 360) % 360);
+    $('parRotP').onclick = () => set('angle', ((Number(n.angle) || 0) + 90) % 360);
+    $('parAlong').onchange = (e) => set('along', Number(e.target.value) || 0);
+    $('parRev').onchange = (e) => set('reverse', e.target.checked);
+    $('propDel').onclick = () => deleteNode(n.id);
+    return;
+  }
   const p = partOf(n);
+  const attachOpts = attachOptions(n);
+  const free = (p?.ports || []).filter((q) => q.name !== n.port && !childAt(n.id, q.name));
   el.innerHTML = `
     <h4>${esc(nodeLabel(n))}</h4>
     <div class="hint">${esc(p?.id || n.part)} – ${esc(p?.description || '')}</div>
     <div class="grid">
       <span>Tag</span><input id="propTag" value="${esc(n.tag || '')}" placeholder="e.g. V-101">
+      ${attachOpts.length > 1 ? `<span>Connected by</span><select id="propAttach">${attachOpts.map((nm) => `<option value="${nm}" ${nm === n.port ? 'selected' : ''}>${esc(portText(p, p.ports.find((q) => q.name === nm)))}</option>`).join('')}</select>` : ''}
+      ${free.length > 1 ? `<span>Next part on</span><select id="propNext">${free.map((q) => `<option value="${q.name}" ${state.active === `${n.id}:${q.name}` ? 'selected' : ''}>${esc(portText(p, q))}</option>`).join('')}</select>` : ''}
       <span>Roll</span><div class="rollbtns">
         <button id="propRollM" title="Roll −90° (Shift+R)">⟲ 90°</button>
         <button id="propRollP" title="Roll +90° (R)">⟳ 90°</button>
@@ -517,11 +695,16 @@ function renderProps() {
       </div>
     </div>
     <div class="btns">
-      <button id="propFlip" title="Attach by its other end (X)">Turn round</button>
+      <button id="propFlip" title="Attach by its next end (X)" ${attachOpts.length > 1 ? '' : 'disabled'}>Turn round</button>
       <button id="propDel" class="danger" title="Delete this part and everything beyond it (Del)">Delete</button>
     </div>
     ${err ? `<div class="msg">${err}</div>` : ''}`;
   $('propTag').onchange = (e) => commit(() => { n.tag = e.target.value.trim(); });
+  if ($('propAttach')) $('propAttach').onchange = (e) => setAttach(n.id, e.target.value);
+  if ($('propNext')) {
+    if (!free.some((q) => state.active === `${n.id}:${q.name}`)) $('propNext').selectedIndex = -1;
+    $('propNext').onchange = (e) => { state.active = `${n.id}:${e.target.value}`; draw(); renderPartList(); };
+  }
   $('propRollM').onclick = () => rollNode(n.id, -90);
   $('propRollP').onclick = () => rollNode(n.id, 90);
   $('propRoll').onchange = (e) => commit(() => { n.roll = Number(e.target.value) || 0; });
@@ -544,12 +727,14 @@ function bom() {
   const rows = new Map();
   for (const n of state.nodes) {
     if (n.type === 'part') {
-      const p = partOf(n);
-      const k = `part|${n.part}`;
-      if (!rows.has(k)) rows.set(k, { item: n.part, desc: p?.description || n.part, size: p?.size_label || '', qty: 0, tags: [] });
-      const r = rows.get(k);
-      r.qty++;
-      if (n.tag) r.tags.push(n.tag);
+      for (const m of membersOf(partOf(n))) { // a kit lists its halves
+        const p = library.parts.get(m.part);
+        const k = `part|${m.part}`;
+        if (!rows.has(k)) rows.set(k, { item: m.part, desc: p?.description || m.part, size: p?.size_label || '', qty: 0, tags: [] });
+        const r = rows.get(k);
+        r.qty++;
+        if (n.tag) r.tags.push(n.tag);
+      }
     }
   }
   const out = [...rows.values()].map((r) => ({ ...r, notes: r.tags.join(' ') }));
@@ -565,7 +750,7 @@ function showBom() {
 }
 
 function spoolData() {
-  return { app: 'pipe-spool-tool', version: 2, name: state.name, startSize: state.startSize, nodes: state.nodes.map(({ cut, gap, ...n }) => n) };
+  return { app: 'pipe-spool-tool', version: 2, name: state.name, pipeType: state.pipeType, startSize: state.startSize, nodes: state.nodes.map(({ cut, gap, target, ...n }) => n) };
 }
 
 // ----------------------------------------------------------------- export
@@ -584,12 +769,16 @@ function exportItems() {
     if (!e) continue;
     if (n.type === 'pipe') {
       if (n.cut > 0.01) items.push({ kind: 'pipe', od: n.od, id: n.od - 2 * n.wall, length: n.cut, matrix: e.matrix });
-    } else {
-      const p = partOf(n);
-      items.push({
-        kind: 'part', key: library.cacheKey(n.part), part: n.part, matrix: e.matrix, name: p.name,
-        geom: { ends: p.ports.map((q) => ({ o: q.origin, d: q.dir })), c: p.centre }, ods: p.ports.map((q) => q.od),
-      });
+    } else if (n.type === 'part') {
+      for (const m of membersOf(partOf(n))) {
+        const p = library.parts.get(m.part);
+        if (!p) continue;
+        items.push({
+          kind: 'part', key: library.cacheKey(m.part), part: m.part, matrix: mul(e.matrix, m.matrix), name: p.name,
+          geom: { ends: p.ports.map((q) => ({ o: q.origin, d: q.dir, engage: q.engage })), c: p.centre }, ods: p.ports.map((q) => q.od),
+          ends: p.ends, info: { category: p.category, type: p.type },
+        });
+      }
     }
   }
   return items;
@@ -632,7 +821,8 @@ async function buildExport() {
     const items = exportItems();
     for (const it of items) if (it.kind === 'part') { msg(`Reading ${it.name}…`); await parts.ensureKernel(it.part); }
     msg(settings.level === 'full' ? 'Merging the full models… (large valves can take a minute)' : 'Shrink-wrapping the parts…');
-    const res = await cad.build({ items, level: settings.level, res: settings.res, hollow: settings.hollow });
+    const runs = state.nodes.filter((n) => !n.parent).length;
+    const res = await cad.build({ items, level: settings.level, res: settings.res, hollow: settings.hollow, runs });
     const { bytes } = await cad.writeStep({ name: state.name });
     built = { sig, bytes, warnings: res.warnings };
     expViewer.clear();
@@ -679,6 +869,7 @@ function loadSpool(data) {
   state.name = data.name || 'Spool';
   $('projectName').value = state.name;
   if (data.startSize) state.startSize = data.startSize;
+  if (data.pipeType) state.pipeType = data.pipeType;
   state.nodes = data.nodes || [];
   state.selected = null;
   state.active = null;
@@ -734,6 +925,18 @@ function wire() {
   $('btnRedo').onclick = redo;
   $('chkDims').onchange = draw;
   $('selStart').onchange = (e) => { state.startSize = e.target.value; renderPartList(); };
+  $('selType').onchange = (e) => { state.pipeType = e.target.value; renderStartSizes(); renderPartList(); };
+  $('groupChips').onclick = (e) => {
+    const b = e.target.closest('[data-group]');
+    if (!b) return;
+    const g = b.dataset.group;
+    if (e.shiftKey || e.altKey) { // only this group
+      const all = [...$('groupChips').querySelectorAll('[data-group]')].map((x) => x.dataset.group);
+      hiddenGroups = new Set(all.filter((x) => x !== g));
+    } else if (hiddenGroups.has(g)) hiddenGroups.delete(g); else hiddenGroups.add(g);
+    try { localStorage.setItem('pipe-spool-tool.hiddenGroups', JSON.stringify([...hiddenGroups])); } catch { /* ignore */ }
+    renderPartList();
+  };
   $('partSearch').oninput = renderPartList;
   $('partSearch').onkeydown = (e) => {
     if (e.key === 'Enter') { const first = $('partList').querySelector('[data-part]'); if (first) { addPart(first.dataset.part); e.target.blur(); } }
@@ -765,7 +968,7 @@ function wire() {
   $('projectName').onchange = (e) => { state.name = e.target.value.trim() || 'Spool'; };
   $('btnNew').onclick = async () => {
     if (state.nodes.length && !await ask('Start a new spool? Unsaved changes are lost.', { ok: 'New spool' })) return;
-    loadSpool({ version: 2, name: 'Spool-01', startSize: state.startSize, nodes: [] });
+    loadSpool({ version: 2, name: 'Spool-01', pipeType: state.pipeType, startSize: state.startSize, nodes: [] });
   };
   $('btnSave').onclick = saveSpool;
   $('btnOpen').onclick = showOpen;

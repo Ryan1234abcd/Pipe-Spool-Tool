@@ -195,3 +195,12 @@ dialog.export { width: 560px; }
 .export-preview { margin-top: 8px; }
 .export-preview .viewport { height: 260px; flex: none; }
 #expStats { margin-top: 4px; min-height: 16px; }
+
+/* part group filter */
+.chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0 2px; }
+.chip { padding: 1px 7px; border-radius: 10px; font-size: 11px; color: var(--muted); background: transparent; }
+.chip span { opacity: .7; }
+.chip.on { background: var(--sel); color: var(--text); border-color: var(--accent-2); }
+#props .grid > select { min-width: 0; }
+.inline-row select { min-width: 0; width: 100%; }
+.inline-row { white-space: nowrap; }

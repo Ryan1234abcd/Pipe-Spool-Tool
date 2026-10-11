@@ -6,8 +6,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import Module from 'replicad-opencascadejs';
-import { Cad } from '../web/js/cad.js';
-import { wrapPart } from '../web/js/wrap.js';
+import { Cad, compactStep } from '../web/js/cad.js';
+import { wrapPart, visibleSolids, boreFillers } from '../web/js/wrap.js';
 import { solve, pipePorts } from '../web/js/kinematics.js';
 import { locateEnds } from '../scripts/ends.mjs';
 
@@ -162,4 +162,30 @@ test('elbow + pipe + flange fuse into one valid solid that survives STEP', () =>
   assert.equal(cad.count(f.shape), 1);
   const back = cad.readStep(cad.writeStep(f.shape, 'Test'));
   assert.ok(Math.abs(cad.volume(back) - cad.volume(f.shape)) / cad.volume(f.shape) < 1e-3);
+});
+
+test('shrink-wrap keeps the real outside of a valve as one lighter solid', () => {
+  const id = 'CILBV50DE';
+  const { shape } = load(id);
+  const solids = cad.solids(shape);
+  const keep = visibleSolids(solids.map((so) => cad.mesh(so)));
+  assert.ok(keep.some((k) => !k) || solids.length === 1, 'some hidden inner piece is left out');
+  const s = cad.shrinkWrap(shape, keep, boreFillers(geo[id], lib.parts[id].ends, lib.parts[id]), 5);
+  assert.ok(s, 'built');
+  assert.ok(cad.isValid(s));
+  assert.ok(cad.count(s, 'TopAbs_FACE') < cad.count(shape, 'TopAbs_FACE'), 'fewer faces');
+  // same overall size as the real valve (it is not an envelope)
+  const a = cad.bbox(shape), b = cad.bbox(s);
+  for (let k = 0; k < 3; k++) assert.ok(Math.abs((a[1][k] - a[0][k]) - (b[1][k] - b[0][k])) < 1, `extent ${k}`);
+});
+
+test('STEP files are written compactly and read back the same', () => {
+  const { shape } = load('SPF50E');
+  const bytes = cad.writeStep(shape, 'Flange');
+  const text = new TextDecoder().decode(bytes);
+  assert.ok(!/PCURVE/.test(text), 'no 2D edge copies');
+  assert.ok(!/\d\.\d{11,}/.test(text.slice(text.indexOf('DATA;'))), 'numbers rounded (not 15 digits)');
+  const back = cad.readStep(bytes);
+  assert.ok(Math.abs(cad.volume(back) - cad.volume(shape)) / cad.volume(shape) < 1e-4);
+  assert.equal(new TextDecoder().decode(compactStep(bytes)).length, text.length, 'idempotent');
 });

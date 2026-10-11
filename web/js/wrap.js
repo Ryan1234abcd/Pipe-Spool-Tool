@@ -225,7 +225,8 @@ export function wrapPart(mesh, geom, info, level = 'wrap', res = 5) {
     const [e1, e2] = ends;
     const parallel = dot(e1.d, e2.d) > 0.999;
     const T1 = len(sub(e1.o, c)), T2 = len(sub(e2.o, c));
-    if (parallel || Math.min(T1, T2) >= 0.9 * maxOd) return bend(pts, e1, e2, c, parallel);
+    const b = parallel || Math.min(T1, T2) >= 0.9 * maxOd ? bend(pts, e1, e2, c, parallel) : null;
+    if (b) return b;
     return legs(pts, ends, c, level, res);
   }
   if (ends.length >= 3) return legs(pts, ends, c, level, res);
@@ -277,6 +278,50 @@ function legs(pts, ends, c, level, res) {
 }
 
 function bend(pts, e1, e2, V, parallel) {
+  if (parallel) return bendWith(pts, e1, e2, V, true, 0);
+  // the bend radius isn't the centre-to-end when the bend has straight
+  // tangents: try radii and keep the one the part fits most tightly
+  const T = Math.min(len(sub(e1.o, V)), len(sub(e2.o, V)));
+  const theta = Math.acos(Math.max(-1, Math.min(1, -dot(e1.d, e2.d))));
+  const sample = pts.filter((_, i) => i % Math.max(1, Math.floor(pts.length / 400)) === 0);
+  let best = null;
+  for (let k = 1; k <= 20; k++) {
+    const R = (T / Math.tan(theta / 2)) * (k / 20);
+    const r = tubeRadius(sample, skeleton(e1, e2, V, R, theta));
+    if (r < 0.98 * R && (!best || r < best.r - 1e-6)) best = { R, r };
+  }
+  return best ? bendWith(pts, e1, e2, V, false, best.R) : null; // too tight for a ring: use legs
+}
+
+/** Arc of radius R between the two ends' axes, plus the straight tangents. */
+function skeleton(e1, e2, V, R, theta) {
+  const t = R * Math.tan(theta / 2);
+  const P1 = add(V, scale(e1.d, t)), P2 = add(V, scale(e2.d, t));
+  const C = add(V, scale(norm(add(e1.d, e2.d)), Math.sqrt(t * t + R * R)));
+  const x = norm(sub(P1, C));
+  const n = norm(cross(x, scale(e1.d, -1)));
+  const y = cross(n, x);
+  const arcPt = (a) => add(C, add(scale(x, R * Math.cos(a)), scale(y, R * Math.sin(a))));
+  const segs = [];
+  const N = 24;
+  for (let i = 0; i < N; i++) segs.push([arcPt((theta * i) / N), arcPt((theta * (i + 1)) / N)]);
+  const T1 = len(sub(e1.o, V)), T2 = len(sub(e2.o, V));
+  if (T1 - t > 0.1) segs.push([P1, e1.o]);
+  if (T2 - t > 0.1) segs.push([P2, e2.o]);
+  return { segs, C, n, x, R, P1, P2, t, T1, T2 };
+}
+
+function tubeRadius(pts, sk) {
+  let r = 0;
+  for (const p of pts) {
+    let m = Infinity;
+    for (const [a, b] of sk.segs) { const dd = distToSegment(p, a, b); if (dd < m) m = dd; }
+    if (m > r) r = m;
+  }
+  return r;
+}
+
+function bendWith(pts, e1, e2, V, parallel, Rfit) {
   let C, R, x, n, angle, P1, P2, T1 = 0, T2 = 0, T = 0;
   if (parallel) { // 180° return bend
     C = scale(add(e1.o, e2.o), 0.5);
@@ -286,14 +331,10 @@ function bend(pts, e1, e2, V, parallel) {
     angle = Math.PI;
     P1 = e1.o; P2 = e2.o;
   } else {
-    T1 = len(sub(e1.o, V)); T2 = len(sub(e2.o, V));
-    T = Math.min(T1, T2);
-    const theta = Math.acos(Math.max(-1, Math.min(1, -dot(e1.d, e2.d)))); // deviation angle
-    R = T / Math.tan(theta / 2);
-    P1 = add(V, scale(e1.d, T)); P2 = add(V, scale(e2.d, T));
-    C = add(V, scale(norm(add(e1.d, e2.d)), Math.sqrt(T * T + R * R)));
-    x = norm(sub(P1, C));
-    n = norm(cross(x, scale(e1.d, -1)));
+    const theta = Math.acos(Math.max(-1, Math.min(1, -dot(e1.d, e2.d))));
+    const sk = skeleton(e1, e2, V, Rfit, theta);
+    ({ C, n, x, R, P1, P2, T1, T2 } = sk);
+    T = sk.t;
     angle = theta;
   }
   // skeleton: arc + straight stubs; the tube radius encloses every sample
@@ -314,5 +355,130 @@ function bend(pts, e1, e2, V, parallel) {
   const out = [{ t: 'torus', c: C, n, x, R, r, angle }];
   if (T1 - T > 0.1) out.push({ t: 'cyl', o: P1, d: e1.d, r, L: T1 - T });
   if (T2 - T > 0.1) out.push({ t: 'cyl', o: P2, d: e2.d, r, L: T2 - T });
+  return out;
+}
+
+// ------------------------------------------------------------ shrink-wrap
+//
+// The shrink-wrap keeps a part's real outer surfaces (cad.js shrinkWrap()):
+// these helpers decide which solids are on the outside and which bores to fill.
+
+/**
+ * Which solids of a part can be seen from outside (the rest – balls, seats,
+ * springs – are hidden inside the body and left out).
+ * @param meshes one display mesh per solid
+ * @returns [bool] per solid
+ */
+export function visibleSolids(meshes, { minFraction = 0.15, samples = 80 } = {}) {
+  // all triangles, with a grid per axis for fast ray tests
+  const tris = [];
+  for (const m of meshes) {
+    const P = m.positions, I = m.indices;
+    for (let t = 0; t < I.length; t += 3) {
+      tris.push([0, 1, 2].map((k) => [P[I[t + k] * 3], P[I[t + k] * 3 + 1], P[I[t + k] * 3 + 2]]));
+    }
+  }
+  if (!tris.length) return meshes.map(() => true);
+  const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+  for (const t of tris) for (const p of t) for (let k = 0; k < 3; k++) { lo[k] = Math.min(lo[k], p[k]); hi[k] = Math.max(hi[k], p[k]); }
+  const N = 48;
+  const grids = [0, 1, 2].map((axis) => {
+    const [a, b] = [0, 1, 2].filter((k) => k !== axis);
+    const sa = (hi[a] - lo[a]) / N || 1, sb = (hi[b] - lo[b]) / N || 1;
+    const cells = new Map();
+    tris.forEach((t, i) => {
+      const ia = t.map((p) => Math.floor((p[a] - lo[a]) / sa)), ib = t.map((p) => Math.floor((p[b] - lo[b]) / sb));
+      for (let x = Math.max(0, Math.min(...ia)); x <= Math.min(N, Math.max(...ia)); x++) {
+        for (let y = Math.max(0, Math.min(...ib)); y <= Math.min(N, Math.max(...ib)); y++) {
+          const k = x * (N + 1) + y;
+          if (!cells.has(k)) cells.set(k, []);
+          cells.get(k).push(i);
+        }
+      }
+    });
+    return { a, b, sa, sb, cells };
+  });
+  const escapes = (p, axis, sign) => {
+    const g = grids[axis];
+    const k = Math.floor((p[g.a] - lo[g.a]) / g.sa) * (N + 1) + Math.floor((p[g.b] - lo[g.b]) / g.sb);
+    const d = [0, 0, 0];
+    d[axis] = sign;
+    for (const i of g.cells.get(k) || []) if (rayTriangle(p, d, tris[i]) > 1e-3 * (hi[axis] - lo[axis] + 1)) return false;
+    return true;
+  };
+  // only a solid lying inside another's box can be hidden in it
+  const boxes = meshes.map((m) => boxOf(m.positions));
+  const insideAnother = (i) => boxes.some((b, j) => j !== i && b && boxes[i]
+    && [0, 1, 2].every((k) => boxes[i][0][k] >= b[0][k] - 0.5 && boxes[i][1][k] <= b[1][k] + 0.5));
+  return meshes.map((m, i) => {
+    const n = m.positions.length / 3;
+    if (!n) return false;
+    if (!insideAnother(i)) return true;
+    const step = Math.max(1, Math.floor(n / samples));
+    let seen = 0, tested = 0;
+    for (let v = 0; v < n; v += step) {
+      const p = [m.positions[v * 3], m.positions[v * 3 + 1], m.positions[v * 3 + 2]];
+      tested++;
+      if ([0, 1, 2].some((ax) => escapes(p, ax, 1) || escapes(p, ax, -1))) seen++;
+    }
+    return seen / tested >= minFraction;
+  });
+}
+
+function boxOf(P) {
+  if (!P.length) return null;
+  const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+  for (let i = 0; i < P.length; i += 3) for (let k = 0; k < 3; k++) { lo[k] = Math.min(lo[k], P[i + k]); hi[k] = Math.max(hi[k], P[i + k]); }
+  return [lo, hi];
+}
+
+function rayTriangle(o, d, [a, b, c]) {
+  const e1 = sub(b, a), e2 = sub(c, a);
+  const pv = cross(d, e2);
+  const det = dot(e1, pv);
+  if (Math.abs(det) < 1e-12) return -1;
+  const tv = sub(o, a);
+  const u = dot(tv, pv) / det;
+  if (u < 0 || u > 1) return -1;
+  const qv = cross(tv, e1);
+  const v = dot(d, qv) / det;
+  if (v < 0 || u + v > 1) return -1;
+  return dot(e2, qv) / det;
+}
+
+/**
+ * Solid cylinders that fill a part's bores and threads, from each end towards
+ * the centre. Threads (female and male) are covered at 2% over their major
+ * diameter; weld ends are filled to the middle of the wall. Bends are left
+ * hollow (their bore is a smooth surface anyway).
+ * @param geom  {ends:[{o, d, engage}], c}
+ * @param ends  library.json ends ({end, od_mm, wall_mm, thread_od_mm})
+ */
+export function boreFillers(geom, ends, part = {}) {
+  const out = [];
+  const E = geom.ends.map((e) => ({ ...e, d: norm(e.d) }));
+  const inline = E.length === 2 && dot(E[0].d, E[1].d) < -0.999;
+  const bend = /elbow/.test(part.category || '') || (E.length === 2 && !inline);
+  E.forEach((e, i) => {
+    const info = ends[i] || {};
+    const end = info.end || '';
+    const od = info.od_mm || 0;
+    const into = scale(e.d, -1);
+    const toCentre = dot(sub(geom.c, e.o), into);
+    let r, from = e.o, L;
+    if (/BSP/.test(end)) {
+      r = 1.02 * (info.thread_od_mm || od) / 2;
+      L = toCentre;
+      if (/male/.test(end) && !/female/.test(end)) { from = add(e.o, scale(e.d, e.engage || 0)); L = toCentre + (e.engage || 0); }
+    } else if (bend || /cap|plug/.test(part.category || '')) {
+      return;
+    } else if (/flange|wafer|lugged/.test(end)) {
+      r = od / 2; L = toCentre;
+    } else {
+      r = od / 2 - (info.wall_mm || od * 0.05) / 2; L = toCentre;
+    }
+    if (!(r > 0) || !(L > 0.5)) return;
+    out.push({ t: 'cyl', o: from, d: into, r, L: L + (inline ? 0.5 : 0) });
+  });
   return out;
 }

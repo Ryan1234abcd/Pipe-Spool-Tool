@@ -23,17 +23,28 @@ try it before opening the library.
 
 ## Build a spool
 
-1. **Pick the first part.** Choose the start size, then click a part in the list.
+1. **Pick the pipe type and first part.** Choose the pipe type (e.g. Sch 10S pipe or dairy tube) –
+   the start size list then only has that type's sizes – and click a part.
 2. **Carry on from the orange end.** The list only shows parts that fit that end: the same pipe size
    and a connection that mates with it. Weld ends and BSP female ends are joined with a pipe (marked
-   **+ pipe**); BSP male into female, RJT, and flange to flange or wafer valve go straight together.
-   Click any blue marker to carry on from another open end.
-3. **Rotate.** Select a part and roll it with **⟳ 90°** / **⟲ 90°** (`R` / `Shift+R`) or type an
-   angle. **Turn round** (`X`) attaches it by its other end.
+   **+ pipe**); BSP male into female, RJT, and flange to flange or wafer valve go straight together
+   (flanges match by their drilling). Click any blue marker to carry on from another open end.
+   The chips above the list (Elbows & bends, Tees, Valves…) show or hide groups; Shift+click a chip
+   to show only that group.
+3. **Rotate and connect.** Select a part and roll it with **⟳ 90°** / **⟲ 90°** (`R` / `Shift+R`) or
+   type an angle. **Connected by** picks which end it is joined by (a tee's run end or its branch);
+   **Next part on** picks which free end the next part goes on.
 4. **Dimension.** Click a pipe, or its dimension in the view, and type the **centre-to-centre**
    (fitting centre to fitting centre; to the pipe end when nothing is beyond it). The pipe's cut
    length is worked out from each fitting's centre-to-end. You can switch a pipe to a plain
    **cut length**, or make it **close-coupled** (no pipe, fittings welded straight together).
+5. **Parallel lines.** Select a pipe and click **Parallel line…**: a new line starts beside it at the
+   **centre distance** you type. Turn it round the pipe (⟳ 90°), slide it along, or run it the other
+   way, then add parts or a pipe (`P`) on its orange end. Change the distance any time.
+
+**RJT unions** are one part: an RJT female half and an RJT male half of the same size come screwed
+together (e.g. *RJT Union BSP male × BSP male*), and only their outer ends connect. The BOM lists
+both halves.
 
 Fitting centres: where the centrelines cross (elbows, tees), midway between the ends (valves,
 reducers), the flange face (flanges) or the end (caps). A pipe screwed into a BSP female end goes in
@@ -54,17 +65,18 @@ The current spool is kept automatically. **BOM** gives a parts list and pipe cut
 
 ## Export STEP
 
-Everything is built in your browser and merged into one solid. Choose the level of detail:
+Everything is built in your browser and merged into one solid per line. Choose the level of detail:
 
 | Level | What you get | Typical size |
 |---|---|---|
 | **Envelope** | each part replaced by a smooth outline (spun round its pipe line, rings for bends) and a block for each handle or bonnet | smallest |
-| **Shrink-wrap** | the outline follows each part at the **resolution** you set (1–50 mm); handles become a few blocks | small |
+| **Shrink-wrap** | the part's real outside: hidden inner parts (balls, seats, springs) left out, bores and threads filled, holes and loose bits smaller than the **resolution** removed | small |
 | **Full model** | the original manufacturer geometry | largest |
 
-Shrink-wrapped parts are solid (bores, threads and text are gone) and always enclose the real part.
 **Build preview** shows the result, its face count and file size before you download it. Pipes are
-solid unless you tick **Hollow pipes** on the full model.
+solid unless you tick **Hollow pipes** on the full model. All levels are written without the
+duplicate 2D edge curves and with numbers to 0.001 mm, which roughly halves the file.
+Complex valves take a few seconds each to shrink-wrap the first time.
 
 ## Develop
 

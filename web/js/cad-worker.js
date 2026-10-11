@@ -1,7 +1,7 @@
 // Web Worker hosting the OpenCascade kernel. The build inlines the
 // replicad-opencascadejs glue (global `Module`) ahead of this file.
 import { Cad } from './cad.js';
-import { wrapPart } from './wrap.js';
+import { wrapPart, visibleSolids, boreFillers } from './wrap.js';
 
 let cad = null;
 const shapes = new Map(); // part key -> TopoDS_Shape
@@ -21,8 +21,15 @@ function partShape(it, level, res, warnings) {
   const k = `${it.key}|${level}|${res}`;
   if (!wrapped.has(k)) {
     try {
-      const prims = wrapPart(cad.mesh(shape), it.geom, { ods: it.ods }, level, res);
-      wrapped.set(k, cad.buildPrimitives(prims));
+      let out = null;
+      if (level === 'wrap') {
+        // the part's own outer surfaces, bores and small holes filled, hidden pieces dropped
+        const solids = cad.solids(shape);
+        const keep = visibleSolids(solids.map((so) => cad.mesh(so)));
+        out = cad.shrinkWrap(shape, keep, boreFillers(it.geom, it.ends, it.info), res);
+      }
+      if (!out) out = cad.buildPrimitives(wrapPart(cad.mesh(shape), it.geom, { ods: it.ods }, level === 'wrap' ? 'wrap' : 'envelope', res));
+      wrapped.set(k, out);
     } catch (e) {
       warnings.push(`${it.name || 'A part'} could not be simplified (${errText(e)}), so its full model is used.`);
       wrapped.set(k, shape);
@@ -53,7 +60,7 @@ const handlers = {
    * level: 'envelope' | 'wrap' | 'full'; res: shrink-wrap step (mm).
    * Returns stats and a display mesh; the STEP bytes come from writeStep().
    */
-  build({ items, level = 'wrap', res = 5, hollow = false, fuse = true }) {
+  build({ items, level = 'wrap', res = 5, hollow = false, fuse = true, runs = 1 }) {
     const warnings = [];
     const placed = items.map((it) => {
       const shape = it.kind === 'pipe' ? cad.makePipe(it.od, level === 'full' && hollow ? it.id : 0, it.length) : partShape(it, level, res, warnings);
@@ -72,8 +79,10 @@ const handlers = {
     }
     if (!result) result = placed.length === 1 ? placed[0] : cad.compound(placed);
     const solids = cad.count(result);
-    if (fuse && solids > 1 && !warnings.length) {
-      warnings.push(`The spool is ${solids} separate solids: some parts don't touch.`);
+    if (fuse && solids > runs && !warnings.length) { // separate lines are separate solids
+      warnings.push(level === 'full'
+        ? `${solids} separate bodies: manufacturer models are often several bodies (handles, bolts) that don't merge.`
+        : `The spool is ${solids} separate solids: some parts don't touch.`);
     }
     lastExport = result;
     const mesh = cad.mesh(result);

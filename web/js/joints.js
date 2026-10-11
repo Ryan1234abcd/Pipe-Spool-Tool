@@ -33,7 +33,13 @@ export function directJoin(a, b) {
     case 'weld+weld': case 'bspF+bspM': case 'rjtF+rjtM':
       return sameOd(a, b);
     case 'flange+flange': case 'flange+wafer':
-      return sameOd(a, b) && (!(a.flange && b.flange) || Math.abs(a.flange - b.flange) < 1);
+      // flanges mate by their drilling, not by the pipe welded to them (a dairy
+      // tube flange takes a wafer valve sized for the matching NB pipe)
+      if (a.flange && b.flange) return Math.abs(a.flange - b.flange) < 1 && !(a.pcd && b.pcd && Math.abs(a.pcd - b.pcd) >= 1);
+      return sameOd(a, b);
+    case 'pipe+start': case 'bspF+start': case 'bspM+start': case 'flange+start': case 'rjtF+start': case 'rjtM+start':
+    case 'start+wafer': case 'start+weld':
+      return sameOd(a, b); // the start of a parallel line takes any end of its size
     default: return false;
   }
 }
