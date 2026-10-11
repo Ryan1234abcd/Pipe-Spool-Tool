@@ -39,10 +39,9 @@ try it before opening the library.
    (fitting centre to fitting centre; to the pipe end when nothing is beyond it). The pipe's cut
    length is worked out from each fitting's centre-to-end. You can switch a pipe to a plain
    **cut length**, or make it **close-coupled** (no pipe, fittings welded straight together).
-5. **Parallel lines.** Select a pipe and click **Parallel line…**: a new line starts beside it at the
-   **centre distance** you type. Turn it round the pipe (⟳ 90°), slide it along, or run it the other
-   way, then add parts or a pipe (`P`) on its orange end. Change the distance any time.
-
+5. **More runs.** **+ Start point** (`S`) starts another run at **X / Y / Z** (mm) from the spool
+   origin (where the first part starts), with its own direction and size. Add parts or a pipe
+   (`P`) on its orange end and build from there; change the coordinates any time.
 6. **Branches.** Select a pipe and click **Branch…**, then pick a weld nipple (normal or extended),
    a tube weld nipple or a half socket: it is stabbed into the pipe (set in, flush with the bore).
    Set **Along pipe** (from the upstream fitting centre) and **Round pipe** (angle), then carry on
@@ -86,6 +85,24 @@ solid unless you tick **Hollow pipes** on the full model. All levels are written
 duplicate 2D edge curves and with numbers to 0.001 mm, which roughly halves the file.
 Complex valves take a few seconds each to shrink-wrap the first time.
 
+## Into a Revit family
+
+Revit won't host a pipe connector on imported geometry, so the export can also save
+`<spool>-connectors.json` (tick **Revit connector file**): the position, direction and size of
+every open end. The Dynamo graph [`revit/Spool connectors.dyn`](revit/Spool%20connectors.dyn) uses
+it to add the connectors for you:
+
+1. In the family editor, **Insert → Import CAD**, pick the STEP, **Positioning: Auto – Origin to
+   origin**, units millimetres.
+2. **Manage → Dynamo**, open `Spool connectors.dyn`, pick the connector file, set the pipe system
+   (e.g. `OtherPipe`, `SupplyHydronic`), choose whether the connector diameter is the nominal size
+   (DN) or the pipe OD, and **Run**.
+3. At each end the graph makes a thin native disc (1 mm, hidden unless you ask) flush with the
+   end face and places a pipe connector on it. Check the connector arrows point out of the spool.
+
+The script is also in [`revit/spool_connectors.py`](revit/spool_connectors.py) to paste into a
+Python node (CPython3) or pyRevit; `node scripts/make-dyn.mjs` rebuilds the graph from it.
+
 ## Develop
 
 ```bash
@@ -101,6 +118,7 @@ npm test             # node tests using the same CAD engine
 | `web/js/kinematics.js` | end-to-end placement |
 | `web/js/wrap.js` | shrink-wrap: simple solids that enclose a part |
 | `web/js/library.js` | reads Part-Library (`library.json` + `geometry.json`) |
+| `web/js/revit.js`, `revit/` | Revit connector file; Dynamo graph and script that add the connectors |
 | `web/js/cad.js`, `cad-worker.js`, `cad-client.js` | OpenCascade (WebAssembly) in a Web Worker |
 | `scripts/library-geometry.mjs`, `scripts/ends.mjs` | find each part's ends in its STEP model → Part-Library `geometry.json` |
 | `scripts/make-demo.mjs` | copy the built-in demo parts from Part-Library into `library/Demo/` |

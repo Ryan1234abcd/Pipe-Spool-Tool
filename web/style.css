@@ -211,3 +211,6 @@ dialog.export { width: 560px; }
 .seg button:last-child { border-radius: 0 4px 4px 0; border-left: none; }
 .seg button.on { background: var(--sel); border-color: var(--accent-2); }
 button.link { border: none; background: none; color: var(--accent-2); padding: 0 2px; text-decoration: underline; }
+.head-row { display: flex; align-items: center; justify-content: space-between; }
+.head-row button { text-transform: none; letter-spacing: 0; font-size: 11px; padding: 1px 8px; }
+[hidden] { display: none !important; }

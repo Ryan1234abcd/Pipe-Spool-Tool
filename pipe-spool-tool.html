@@ -219,6 +219,9 @@ dialog.export { width: 560px; }
 .seg button:last-child { border-radius: 0 4px 4px 0; border-left: none; }
 .seg button.on { background: var(--sel); border-color: var(--accent-2); }
 button.link { border: none; background: none; color: var(--accent-2); padding: 0 2px; text-decoration: underline; }
+.head-row { display: flex; align-items: center; justify-content: space-between; }
+.head-row button { text-transform: none; letter-spacing: 0; font-size: 11px; padding: 1px 8px; }
+[hidden] { display: none !important; }
 
 </style>
 </head>
@@ -283,7 +286,7 @@ button.link { border: none; background: none; color: var(--accent-2); padding: 0
     <aside class="right">
       <div class="panel" id="props"></div>
       <div class="panel grow">
-        <h3>Spool</h3>
+        <h3 class="head-row">Spool <button id="btnStartPt" title="Start another run from a point X/Y/Z from the spool origin (S)">+ Start point</button></h3>
         <div id="tree" class="list tree"></div>
       </div>
     </aside>
@@ -324,6 +327,7 @@ button.link { border: none; background: none; color: var(--accent-2); padding: 0
     <span class="hint">smaller = closer fit, more faces</span>
   </label>
   <label id="expHollowRow"><input type="checkbox" id="expHollow"> Hollow pipes (show the bore)</label>
+  <label title="For the Dynamo graph in the tool's revit/ folder, which adds a pipe connector at each open end in a Revit family"><input type="checkbox" id="expConn" checked> Revit connector file (.json, for the Dynamo graph)</label>
   <div class="export-preview">
     <div id="expView" class="viewport"></div>
     <div id="expStats" class="hint"></div>
@@ -2269,6 +2273,47 @@ function dimFromCut(mode, cut, a, b) {
 
 return { OD_TOL, endFamily, directJoin, nominalSize, takesPipe, joinOptions, pipeFor, centreToEnd, cutLength, dimFromCut };
 })();
+__mods["./revit.js"] = (() => {
+// The Revit connector file: every open end of the spool, for the Dynamo graph
+// in revit/ that adds a pipe connector at each end of the imported spool.
+// Pure (tested in tests/joints.test.mjs).
+const { nominalSize } = __mods["./joints.js"];
+
+const r3 = (v) => v.map((x) => Math.round(x * 1000) / 1000 || 0);
+const unit = (v) => { const l = Math.hypot(...v) || 1; return r3(v.map((x) => x / l)); };
+
+/** Nominal size (DN) of a port: its own, from an "NNNB" label, or the tube OD. */
+function nominalOf(port) {
+  if (port.dn) return port.dn;
+  const m = /^(\d+)\s*NB/i.exec(port.label || '');
+  return m ? Number(m[1]) : nominalSize({ od_mm: port.od });
+}
+
+/**
+ * @param open   openPorts() result: [{nodeId, port}] with world ports
+ * @param nodeOf function(nodeId) -> spool node
+ * @returns {units, origin, ends:[{name, point, direction, od, nominal, end, part}]}
+ */
+function connectorEnds(open, nodeOf) {
+  const ends = [];
+  for (const { nodeId, port } of open) {
+    if (port.family === 'start' || port.family === 'none') continue; // start point markers
+    const n = nodeOf(nodeId);
+    ends.push({
+      name: `E${ends.length + 1}`,
+      point: r3(port.origin),
+      direction: unit(port.dir), // out of the spool
+      od: port.od || null,
+      nominal: nominalOf(port),
+      end: port.family === 'pipe' ? 'pipe end' : (port.end || port.family),
+      part: n?.type === 'pipe' ? `pipe ${n.label || ''}`.trim() : n?.part || null,
+    });
+  }
+  return { units: 'mm', origin: 'STEP origin (spool origin)', note: 'point is on the end face; direction points out of the spool', ends };
+}
+
+return { connectorEnds };
+})();
 __mods["./ui.js"] = (() => {
 // Small UI helpers shared by the app modules.
 
@@ -2941,6 +2986,7 @@ const { Library, kvGet, kvSet, GROUPS, groupOf } = __mods["./library.js"];
 const { createPartLoader } = __mods["./parts.js"];
 const { startCad, cad } = __mods["./cad-client.js"];
 const { toast, esc, ask, saveFile } = __mods["./ui.js"];
+const { connectorEnds } = __mods["./revit.js"];
 
 const COLORS = { pipe: 0x9aabbd, part: 0xd38a3a, fitting: 0x8195ab };
 const SPOOLS_KEY = 'pipe-spool-tool.spools.v2';
@@ -3002,7 +3048,7 @@ const isFitting = (p) => !/valve|strainer/.test(p?.category || '');
 function nodeLabel(n) {
   if (!n) return '?';
   if (n.type === 'pipe') return `Pipe ${n.label}`;
-  if (n.type === 'start') return `Parallel line ${n.label}`;
+  if (n.type === 'start') return `Start point ${n.label}`;
   return partOf(n)?.name || n.part;
 }
 
@@ -3076,16 +3122,7 @@ async function rebuild() {
     n.cut = round(cutLength(n.dim, a, b), 2);
   }
   for (const n of state.nodes) n.gap = jointGap(n);
-  // parallel lines start from a point beside their reference pipe, so place
-  // the rest first and then them (a few passes for lines off parallel lines)
-  const starts = state.nodes.filter((n) => n.type === 'start');
-  for (const n of starts) delete n.target;
-  solved = solve(state.nodes.filter((n) => !starts.includes(n) && !hangsOff(n, starts)), localPorts);
-  for (let pass = 0; pass < 4 && starts.length; pass++) {
-    for (const n of starts) n.target = startTarget(n) || undefined;
-    solved = solve(state.nodes.filter((n) => n.type !== 'start' || n.target ? !hangsOffUnplaced(n) : false), localPorts);
-  }
-  for (const n of starts) if (!n.target) solved.errors.push({ id: n.id, message: 'Its reference pipe is gone' });
+  solved = solve(state.nodes, localPorts); // start points sit at their own origin (rootTarget)
   for (const n of state.nodes) {
     if (n.type === 'pipe' && n.cut < 0) solved.errors.push({ id: n.id, message: `Dimension too short by ${round(-n.cut)} mm` });
   }
@@ -3106,31 +3143,6 @@ async function rebuild() {
     try { const d = await parts.get(id); meshes.set(id, { geometry: d.geometry, turnGeometry: d.turnGeometry }); } catch (e) { toast(`${library.parts.get(id)?.name || id}: ${e.message}`, true); }
   }));
   if (seq === buildSeq) draw();
-}
-
-/** Is n (or something it hangs off) one of the given roots? */
-function hangsOff(n, roots) {
-  for (let x = n; x; x = nodeById(x.parent)) if (roots.includes(x)) return true;
-  return false;
-}
-function hangsOffUnplaced(n) {
-  for (let x = n; x; x = nodeById(x.parent)) if (x.type === 'start' && !x.target) return true;
-  return false;
-}
-
-/** World start of a parallel line: beside its reference pipe at the centre distance. */
-function startTarget(n) {
-  const e = solved.placed.get(n.ref);
-  if (!e) return null;
-  const a = e.ports[0].origin, b = e.ports[1].origin;
-  let u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
-  const L = Math.hypot(...u);
-  u = L > 1e-6 ? u.map((v) => v / L) : e.ports[1].dir;
-  const v = rotate(defaultUp(u), u, ((Number(n.angle) || 0) * Math.PI) / 180);
-  const along = Number(n.along) || 0, dist = Number(n.dist) || 0;
-  const origin = [0, 1, 2].map((k) => a[k] + u[k] * along + v[k] * dist);
-  const dir = n.reverse ? u.map((x) => -x) : u;
-  return { origin, dir, up: v, from: [0, 1, 2].map((k) => a[k] + u[k] * along) };
 }
 
 function portByKey(key) {
@@ -3187,7 +3199,7 @@ function draw() {
           el.title = 'Branch position: from the upstream centre, and round the pipe – click to edit';
         }
       }
-    } else if (n.type === 'start' && n.target) {
+    } else if (n.type === 'start') {
       drawStart(n);
     }
     if (mesh) {
@@ -3227,23 +3239,23 @@ function membersOf(p) {
   return p.members || [{ part: p.id, matrix: [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]] }];
 }
 
-/** Parallel line: dashed centre-distance line from its reference pipe, with the value. */
+/** Start point: a marker at its origin with its coordinates, and a line from the spool origin. */
 function drawStart(n) {
-  const t = n.target;
-  const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(...t.from), new THREE.Vector3(...t.origin)]);
+  const o = n.origin || [0, 0, 0];
+  const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(...o)]);
   const line = new THREE.Line(geo, new THREE.LineDashedMaterial({ color: 0x2f6fb3, dashSize: 8, gapSize: 5, depthTest: false }));
   line.computeLineDistances();
   line.renderOrder = 5;
   viewer.content.add(line);
   const sph = new THREE.Mesh(new THREE.SphereGeometry(Math.max(4, (n.od || 50) * 0.12), 12, 8), new THREE.MeshBasicMaterial({ color: n.id === state.selected ? 0xe8792b : 0x2f6fb3, depthTest: false }));
-  sph.position.set(...t.origin);
+  sph.position.set(...o);
   sph.renderOrder = 10;
   sph.userData.nodeId = n.id;
   viewer.content.add(sph);
   if ($('chkDims').checked) {
-    const el = addLabel('dim-label', `C-C ${round(Number(n.dist) || 0)}`, t.from.map((v, i) => (v + t.origin[i]) / 2));
+    const el = addLabel('dim-label', `X ${round(o[0])} · Y ${round(o[1])} · Z ${round(o[2])}`, o);
     el.dataset.node = n.id;
-    el.title = 'Centre distance to the reference pipe – click to edit';
+    el.title = 'Start point, from the spool origin – click to edit';
     el.classList.toggle('sel', n.id === state.selected);
   }
 }
@@ -3426,16 +3438,19 @@ function addPipe() {
   });
 }
 
-/** Start a line parallel to a pipe, at a centre distance from it. */
-function addParallel(pipeId) {
-  const p = nodeById(pipeId);
-  if (!p || p.type !== 'pipe') return;
+/** A new start point: another run from X/Y/Z (mm) off the spool origin. */
+function addStartPoint() {
+  const label = state.startSize;
+  const end = library.list().flatMap((p) => p.ports).find((q) => q.label === label);
+  if (!end) { toast('Pick a start size first.', true); return; }
   commit(() => {
-    const n = { id: newId(), type: 'start', port: 'in', ref: p.id, dist: Math.ceil((p.od * 3) / 50) * 50, angle: 0, along: 0, reverse: false,
-      od: p.od, wall: p.wall, label: p.label, threaded: !!p.threaded };
+    const spec = end.family === 'bspF' || end.family === 'bspM' ? pipeFor({ ...end, family: 'bspF' }) : pipeFor(end);
+    const n = { id: newId(), type: 'start', port: 'in', origin: [0, 500, 0], startDir: state.startDir || '+X',
+      od: spec.od, wall: spec.wall, label: spec.label, threaded: spec.threaded };
     state.nodes.push(n);
     state.selected = n.id;
     state.active = `${n.id}:out`;
+    needFit = true;
   });
 }
 
@@ -3445,8 +3460,7 @@ function removeSubtree(id) {
   while (grew) {
     grew = false;
     for (const n of state.nodes) {
-      // what hangs off it, and parallel lines measured from it
-      if (!kill.has(n.id) && ((n.parent && kill.has(n.parent)) || (n.type === 'start' && kill.has(n.ref)))) { kill.add(n.id); grew = true; }
+      if (!kill.has(n.id) && n.parent && kill.has(n.parent)) { kill.add(n.id); grew = true; }
     }
   }
   state.nodes = state.nodes.filter((n) => !kill.has(n.id));
@@ -3548,7 +3562,7 @@ function renderStartSizes() {
   $('selStart').innerHTML = labels.map((l) => `<option ${l === state.startSize ? 'selected' : ''}>${esc(l)}</option>`).join('');
 }
 
-const FAMILY_TEXT = { weld: 'weld end', bspF: 'BSP female', bspM: 'BSP male', rjtM: 'RJT male', rjtF: 'RJT female', flange: 'flange face', wafer: 'wafer face', pipe: 'pipe end' };
+const FAMILY_TEXT = { start: 'start point (any end of this size)', weld: 'weld end', bspF: 'BSP female', bspM: 'BSP male', rjtM: 'RJT male', rjtF: 'RJT female', flange: 'flange face', wafer: 'wafer face', pipe: 'pipe end' };
 
 function renderPartList() {
   const empty = !state.nodes.length;
@@ -3601,8 +3615,8 @@ function renderTree() {
   let html = '';
   const walk = (parent, depth) => {
     for (const n of state.nodes.filter((x) => (x.parent || null) === parent)) {
-      const extra = n.type === 'pipe' ? `${round(n.cut)} mm` : n.type === 'start' ? `C-C ${round(Number(n.dist) || 0)}` : (partOf(n)?.size_label || '');
-      const name = n.type === 'pipe' ? 'Pipe' : n.type === 'start' ? 'Parallel line' : (partOf(n)?.type_name || n.part);
+      const extra = n.type === 'pipe' ? `${round(n.cut)} mm` : n.type === 'start' ? (n.origin || [0, 0, 0]).map((v) => round(v)).join(', ') : (partOf(n)?.size_label || '');
+      const name = n.type === 'pipe' ? 'Pipe' : n.type === 'start' ? 'Start point' : (partOf(n)?.type_name || n.part);
       const cls = ['item', n.id === state.selected ? 'sel' : '', errById.has(n.id) ? 'err' : ''].join(' ');
       html += `<div class="${cls}" data-node="${n.id}" style="padding-left:${6 + depth * 10}px" title="${esc(errById.get(n.id) || '')}">`
         + `${esc(n.tag ? `${n.tag} – ` : '')}${esc(name)}<span class="meta">${esc(extra)}</span></div>`;
@@ -3641,7 +3655,6 @@ function renderProps() {
       </div>
       <div class="btns">
         <button id="propClose" title="No pipe: the parts weld or screw straight together">Close-coupled</button>
-        <button id="propPar" title="Start a new line parallel to this pipe, at a centre distance">Parallel line…</button>
         <button id="propBranch" title="Stab a weld nipple into this pipe to start a branch">Branch…</button>
         <button id="propDel" class="danger" title="Delete this pipe and everything beyond it (Del)">Delete</button>
       </div>
@@ -3655,36 +3668,37 @@ function renderProps() {
       setDim(n.id, mode, round(dimFromCut(mode, Math.max(n.cut, 0), a, b)));
     };
     $('propClose').onclick = () => setDim(n.id, 'cut', 0);
-    $('propPar').onclick = () => addParallel(n.id);
     $('propBranch').onclick = () => { state.branchOn = n.id; renderPartList(); toast('Pick a weld nipple to stab into this pipe'); };
     $('propDel').onclick = () => deleteNode(n.id);
     setTimeout(() => { const f = $('propDim'); if (f && document.activeElement === document.body) { f.focus(); f.select(); } }, 30);
     return;
   }
   if (n.type === 'start') {
+    const o = n.origin || [0, 0, 0];
+    const labels = [...labelOd.keys()].filter((l) => library.list().some((p) => inPipeType(p) && p.ports.some((q) => q.label === l))).sort((a, b) => sizeOrder(a) - sizeOrder(b));
     el.innerHTML = `
-      <h4>Parallel line ${esc(n.label)}</h4>
-      <div class="hint">Starts beside ${esc(nodeLabel(nodeById(n.ref)))}. Add parts or a pipe (<kbd>P</kbd>) on its orange end.</div>
+      <h4>Start point ${esc(n.label)}</h4>
+      <div class="hint">Another run, from the spool origin (where the first part starts). Add a part or a pipe (<kbd>P</kbd>) on its orange end.</div>
       <div class="grid">
-        <span>Centre dist.</span><input id="parDist" type="number" step="5" min="0" value="${round(Number(n.dist) || 0)}" aria-label="Centre distance in mm">
-        <span>Side</span><div class="rollbtns">
-          <button id="parRotM" title="Turn the side −90° about the pipe">⟲ 90°</button>
-          <button id="parRotP" title="Turn the side +90° about the pipe">⟳ 90°</button>
-          <input id="parAngle" type="number" step="15" value="${Number(n.angle) || 0}" aria-label="Side angle in degrees">°
-        </div>
-        <span>Along</span><input id="parAlong" type="number" step="10" value="${round(Number(n.along) || 0)}" title="Distance along the reference pipe from its start" aria-label="Offset along the pipe in mm">
-        <span>Direction</span><label class="inline"><input type="checkbox" id="parRev" ${n.reverse ? 'checked' : ''}> Run the other way</label>
+        <span>X (mm)</span><input id="spX" type="number" step="10" value="${round(o[0])}">
+        <span>Y (mm)</span><input id="spY" type="number" step="10" value="${round(o[1])}">
+        <span>Z (mm)</span><input id="spZ" type="number" step="10" value="${round(o[2])}">
+        <span>Start</span><select id="spDir">${Object.entries(DIR_TEXT).map(([k, t]) => `<option value="${k}" ${k === (n.startDir || '+X') ? 'selected' : ''}>${t}</option>`).join('')}</select>
+        <span>Size</span><select id="spSize" ${childrenOf(n.id).length ? 'disabled title="Delete what is on it to change the size"' : ''}>${labels.map((l) => `<option ${l === n.label ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
       </div>
-      <div class="btns"><button id="propDel" class="danger" title="Delete this line and everything on it (Del)">Delete</button></div>
+      <div class="btns"><button id="propDel" class="danger" title="Delete this start point and everything on it (Del)">Delete</button></div>
       ${err ? `<div class="msg">${err}</div>` : ''}`;
-    const set = (k, v) => commit(() => { n[k] = v; });
-    $('parDist').onchange = (e) => set('dist', Math.max(0, Number(e.target.value) || 0));
-    $('parDist').onkeydown = (e) => { if (e.key === 'Enter') e.target.blur(); };
-    $('parAngle').onchange = (e) => set('angle', Number(e.target.value) || 0);
-    $('parRotM').onclick = () => set('angle', ((Number(n.angle) || 0) - 90 + 360) % 360);
-    $('parRotP').onclick = () => set('angle', ((Number(n.angle) || 0) + 90) % 360);
-    $('parAlong').onchange = (e) => set('along', Number(e.target.value) || 0);
-    $('parRev').onchange = (e) => set('reverse', e.target.checked);
+    const setXYZ = (k, v) => commit(() => { const q = [...(n.origin || [0, 0, 0])]; q[k] = Number(v) || 0; n.origin = q; });
+    ['spX', 'spY', 'spZ'].forEach((id, k) => {
+      $(id).onchange = (e) => setXYZ(k, e.target.value);
+      $(id).onkeydown = (e) => { if (e.key === 'Enter') e.target.blur(); };
+    });
+    $('spDir').onchange = (e) => commit(() => { n.startDir = e.target.value; });
+    $('spSize').onchange = (e) => commit(() => {
+      const end = library.list().flatMap((p) => p.ports).find((q) => q.label === e.target.value);
+      const spec = end.family === 'bspF' || end.family === 'bspM' ? pipeFor({ ...end, family: 'bspF' }) : pipeFor(end);
+      Object.assign(n, { od: spec.od, wall: spec.wall, label: spec.label, threaded: spec.threaded });
+    });
     $('propDel').onclick = () => deleteNode(n.id);
     return;
   }
@@ -3877,6 +3891,10 @@ async function downloadExport() {
   try {
     const saved = await saveFile(`${state.name}.stp`, b.bytes, 'application/step');
     if (!saved) { $('expMsg').textContent = 'Download cancelled.'; return; }
+    if ($('expConn').checked) { // for the Dynamo graph that adds Revit pipe connectors
+      const ends = connectorEnds(open, nodeById);
+      await saveFile(`${state.name}-connectors.json`, JSON.stringify(ends, null, 1), 'application/json');
+    }
     $('dlgExport').close();
     toast(`Saved ${saved}`);
   } catch (e) { $('expMsg').textContent = e.message; }
@@ -3901,6 +3919,10 @@ function loadSpool(data) {
   if (data.startDir) { state.startDir = data.startDir; $('selDir').value = data.startDir; }
   state.branchOn = null;
   state.nodes = data.nodes || [];
+  // parallel lines (measured from a pipe) were replaced by start points at X/Y/Z
+  const old = state.nodes.filter((n) => n.type === 'start' && n.ref);
+  for (const n of old) removeSubtree(n.id);
+  if (old.length) toast(`${old.length} parallel line${old.length === 1 ? '' : 's'} removed – use Start point… instead.`, true, 7000);
   state.selected = null;
   state.active = null;
   undoStack.length = 0;
@@ -3964,6 +3986,7 @@ function wire() {
     renderPartList();
   };
   $('selDir').onchange = (e) => { state.startDir = e.target.value; };
+  $('btnStartPt').onclick = addStartPoint;
   $('partSearch').oninput = renderPartList;
   $('partSearch').onkeydown = (e) => {
     if (e.key === 'Enter') { const first = $('partList').querySelector('[data-part]'); if (first) { addPart(first.dataset.part); e.target.blur(); } }
@@ -4064,6 +4087,7 @@ function wire() {
     }
     if (k === '/' || k === 'f') { e.preventDefault(); $('partSearch').focus(); $('partSearch').select(); }
     else if (k === 'p') addPipe();
+    else if (k === 's') addStartPoint();
     else if (k === 'r' && sel) rollNode(sel, e.shiftKey ? -90 : 90);
     else if (k === 'x' && sel) flipNode(sel);
     else if ((k === 'delete' || k === 'backspace') && sel) { e.preventDefault(); deleteNode(sel); }

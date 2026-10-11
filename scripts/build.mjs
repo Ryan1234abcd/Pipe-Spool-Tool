@@ -24,6 +24,7 @@ const APP_MODULES = [
   [path.join(THREE_ADDONS, 'renderers/CSS2DRenderer.js'), 'three/addons/CSS2DRenderer.js'],
   ['js/kinematics.js', './kinematics.js'],
   ['js/joints.js', './joints.js'],
+  ['js/revit.js', './revit.js'],
   ['js/ui.js', './ui.js'],
   ['js/library.js', './library.js'],
   ['js/cad-client.js', './cad-client.js'],

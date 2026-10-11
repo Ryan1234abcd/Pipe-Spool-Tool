@@ -68,7 +68,7 @@
     <aside class="right">
       <div class="panel" id="props"></div>
       <div class="panel grow">
-        <h3>Spool</h3>
+        <h3 class="head-row">Spool <button id="btnStartPt" title="Start another run from a point X/Y/Z from the spool origin (S)">+ Start point</button></h3>
         <div id="tree" class="list tree"></div>
       </div>
     </aside>
@@ -109,6 +109,7 @@
     <span class="hint">smaller = closer fit, more faces</span>
   </label>
   <label id="expHollowRow"><input type="checkbox" id="expHollow"> Hollow pipes (show the bore)</label>
+  <label title="For the Dynamo graph in the tool's revit/ folder, which adds a pipe connector at each open end in a Revit family"><input type="checkbox" id="expConn" checked> Revit connector file (.json, for the Dynamo graph)</label>
   <div class="export-preview">
     <div id="expView" class="viewport"></div>
     <div id="expStats" class="hint"></div>

@@ -64,3 +64,34 @@ test('cut length from centre-to-centre, centre-to-end and thread engagement', ()
   assert.ok(Math.abs(dimFromCut('cc', 347.6, elbow, elbow) - 500) < 1e-9);
   assert.equal(centreToEnd({ origin: [76.2, 0, 76.2], dir: [1, 0, 0] }, [0, 0, 76.2]), 76.2);
 });
+
+test('Revit connector file lists the open ends with point, direction and size', async () => {
+  const { connectorEnds } = await import('../web/js/revit.js');
+  const { solve, openPorts, pipePorts } = await import('../web/js/kinematics.js');
+  const elbow = [
+    { name: '0', origin: [0, 0, 0], dir: [0, 0, -1], up: [1, 0, 0], od: 60.3, dn: 50, family: 'weld', end: 'butt-weld' },
+    { name: '1', origin: [76.2, 0, 76.2], dir: [1, 0, 0], up: [0, 0, 1], od: 60.3, dn: 50, family: 'weld', end: 'butt-weld' },
+  ];
+  const nodes = [
+    { id: 'e', type: 'part', part: 'SPB5090S10', port: '0' },
+    { id: 'p', type: 'pipe', label: '50NB', od: 60.3, length: 300, port: 'A', parent: 'e', parentPort: '1' },
+    { id: 's', type: 'start', port: 'in', origin: [0, 500, 0], startDir: '+X' },
+  ];
+  const portsOf = (n) => (n.type === 'pipe' ? pipePorts(n.od, n.length).map((q) => ({ ...q, family: 'pipe', label: n.label }))
+    : n.type === 'start' ? [{ name: 'in', origin: [0, 0, 0], dir: [-1, 0, 0], family: 'none' }, { name: 'out', origin: [0, 0, 0], dir: [1, 0, 0], family: 'start' }] : elbow);
+  const { placed } = solve(nodes, portsOf);
+  const file = connectorEnds(openPorts(nodes, placed), (id) => nodes.find((n) => n.id === id));
+  assert.equal(file.units, 'mm');
+  assert.equal(file.ends.length, 2, 'elbow inlet and pipe end, not the start point');
+  for (const e of file.ends) {
+    assert.equal(e.nominal, 50);
+    assert.ok(Math.abs(Math.hypot(...e.direction) - 1) < 1e-3);
+  }
+  const pipeEnd = file.ends.find((e) => e.end === 'pipe end');
+  const elbowEnd = file.ends.find((e) => e.end === 'butt-weld');
+  // the open pipe end is 300 mm on from the elbow outlet, pointing away from the elbow
+  const outlet = placed.get('e').ports[1].origin;
+  assert.ok(Math.abs(Math.hypot(...pipeEnd.point.map((v, i) => v - outlet[i])) - 300) < 1e-3);
+  assert.ok(pipeEnd.direction.every((v, i) => Math.abs(v - placed.get('e').ports[1].dir[i]) < 1e-3));
+  assert.ok(elbowEnd.point.every((v, i) => Math.abs(v - placed.get('e').ports[0].origin[i]) < 1e-3));
+});
