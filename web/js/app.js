@@ -12,7 +12,7 @@ import { Library, kvGet, kvSet, GROUPS, groupOf } from './library.js';
 import { createPartLoader } from './parts.js';
 import { startCad, cad } from './cad-client.js';
 import { toast, esc, ask, saveFile } from './ui.js';
-import { connectorEnds } from './revit.js';
+import { revitFile, NATIVE_GROUPS } from './revit.js';
 
 const COLORS = { pipe: 0x9aabbd, part: 0xd38a3a, fitting: 0x8195ab };
 const SPOOLS_KEY = 'pipe-spool-tool.spools.v2';
@@ -826,7 +826,8 @@ let built = null; // {sig, stats}
 
 function exportSettings() {
   const level = document.querySelector('input[name=expLevel]:checked').value;
-  return { level, res: Number($('expRes').value), hollow: $('expHollow').checked };
+  const output = document.querySelector('input[name=expOut]:checked').value;
+  return { output, level, res: Number($('expRes').value), hollow: $('expHollow').checked };
 }
 
 function exportItems() {
@@ -835,13 +836,14 @@ function exportItems() {
     const e = solved.placed.get(n.id);
     if (!e) continue;
     if (n.type === 'pipe') {
-      if (n.cut > 0.01) items.push({ kind: 'pipe', od: n.od, id: n.od - 2 * n.wall, length: n.cut, matrix: e.matrix });
+      if (n.cut > 0.01) items.push({ kind: 'pipe', node: n.id, native: true, od: n.od, id: n.od - 2 * n.wall, length: n.cut, matrix: e.matrix });
     } else if (n.type === 'part') {
       for (const m of membersOf(partOf(n))) {
         const p = library.parts.get(m.part);
         if (!p) continue;
         items.push({
-          kind: 'part', key: library.cacheKey(m.part), part: m.part, matrix: mul(e.matrix, m.matrix), name: p.name,
+          kind: 'part', node: n.id, native: NATIVE_GROUPS.includes(groupOf(p)),
+          key: library.cacheKey(m.part), part: m.part, matrix: mul(e.matrix, m.matrix), name: p.name,
           geom: { ends: p.ports.map((q) => ({ o: q.origin, d: q.dir, engage: q.engage })), c: p.centre }, ods: p.ports.map((q) => q.od),
           ends: p.ends, info: { category: p.category, type: p.type },
           turn: p.turn, stem: p.stem, closed: n.handle === 'closed',
@@ -853,12 +855,15 @@ function exportItems() {
 }
 
 function syncExportForm() {
-  const { level, res } = exportSettings();
+  const { level, res, output } = exportSettings();
+  const revit = output === 'revit';
   $('expResRow').hidden = level !== 'wrap';
   $('expHollowRow').hidden = level !== 'full';
+  $('expLevelHead').textContent = revit ? 'Valves and strainers (STEP)' : 'Level of detail';
+  $('expConnRow').hidden = revit; // always written for a Revit family
   $('expResOut').textContent = `${res} mm`;
   const stale = built && built.sig !== JSON.stringify({ ...exportSettings(), nodes: spoolData().nodes });
-  $('expGo').textContent = built && !stale ? 'Download STEP' : 'Build and download';
+  $('expGo').textContent = built && !stale ? (revit ? 'Download files' : 'Download STEP') : 'Build and download';
   if (stale) $('expStats').textContent = 'Settings changed – build the preview again to see the result.';
 }
 
@@ -890,16 +895,22 @@ async function buildExport() {
     for (const it of items) if (it.kind === 'part') { msg(`Reading ${it.name}…`); await parts.ensureKernel(it.part); }
     msg(settings.level === 'full' ? 'Merging the full models… (large valves can take a minute)' : 'Shrink-wrapping the parts…');
     const runs = state.nodes.filter((n) => !n.parent).length;
-    const res = await cad.build({ items, level: settings.level, res: settings.res, hollow: settings.hollow, runs });
-    const { bytes } = await cad.writeStep({ name: state.name });
-    built = { sig, bytes, warnings: res.warnings };
+    const split = settings.output === 'revit';
+    const res = await cad.build({ items, level: settings.level, res: settings.res, hollow: settings.hollow, runs, split });
+    const bytes = split && !res.solids ? null : (await cad.writeStep({ name: state.name })).bytes;
+    built = { sig, bytes, warnings: res.warnings, native: res.native || [], split };
     expViewer.clear();
     const g = geometryFromMesh(res.mesh);
     g.userData.shared = false;
     expViewer.content.add(new THREE.Mesh(g, material('fitting', false)));
     expViewer.resize();
     expViewer.fit();
-    $('expStats').innerHTML = `<b>${(bytes.length / 1024 / 1024).toFixed(2)} MB</b> · ${res.faces} faces · ${res.solids} solid${res.solids === 1 ? '' : 's'} · built in ${((performance.now() - t0) / 1000).toFixed(1)} s`;
+    const secs = `built in ${((performance.now() - t0) / 1000).toFixed(1)} s`;
+    const mb = (b) => `${(b.length / 1024 / 1024).toFixed(2)} MB`;
+    const nNative = built.native.reduce((k, g) => k + g.prims.length, 0);
+    $('expStats').innerHTML = !split
+      ? `<b>${mb(bytes)}</b> · ${res.faces} faces · ${res.solids} solid${res.solids === 1 ? '' : 's'} · ${secs}`
+      : `${bytes ? `Valve STEP <b>${mb(bytes)}</b> (${res.solids} bod${res.solids === 1 ? 'y' : 'ies'}, ${res.faces} faces)` : 'No valves: no STEP file'} · <b>${nNative}</b> native Revit solids for ${built.native.length} pipes and fittings · ${secs}`;
     msg(res.warnings.join(' '));
     return built;
   } catch (e) {
@@ -915,11 +926,17 @@ async function downloadExport() {
   const b = await buildExport();
   if (!b) return;
   try {
-    const saved = await saveFile(`${state.name}.stp`, b.bytes, 'application/step');
-    if (!saved) { $('expMsg').textContent = 'Download cancelled.'; return; }
-    if ($('expConn').checked) { // for the Dynamo graph that adds Revit pipe connectors
-      const ends = connectorEnds(open, nodeById);
-      await saveFile(`${state.name}-connectors.json`, JSON.stringify(ends, null, 1), 'application/json');
+    // for the Dynamo graph: native pipes and fittings, connectors and references at the open ends
+    const file = () => JSON.stringify(revitFile(open, nodeById, b.split ? b.native : []));
+    let saved = null;
+    if (b.bytes) {
+      saved = await saveFile(`${state.name}${b.split ? '-valves' : ''}.stp`, b.bytes, 'application/step');
+      if (!saved) { $('expMsg').textContent = 'Download cancelled.'; return; }
+    }
+    if (b.split || $('expConn').checked) {
+      const j = await saveFile(`${state.name}-revit.json`, file(), 'application/json');
+      if (!j) { $('expMsg').textContent = 'Download cancelled.'; return; }
+      saved = saved ? `${saved} and ${j}` : j;
     }
     $('dlgExport').close();
     toast(`Saved ${saved}`);
@@ -1080,6 +1097,10 @@ function wire() {
   $('expBuild').onclick = buildExport;
   $('expGo').onclick = downloadExport;
   document.querySelectorAll('input[name=expLevel]').forEach((r) => { r.onchange = syncExportForm; });
+  document.querySelectorAll('input[name=expOut]').forEach((r) => {
+    try { if (localStorage.getItem('pst.exportOutput') === r.value) r.checked = true; } catch { /* no storage */ }
+    r.onchange = () => { try { localStorage.setItem('pst.exportOutput', r.value); } catch { /* no storage */ } syncExportForm(); };
+  });
   $('expRes').oninput = syncExportForm;
   $('expHollow').onchange = syncExportForm;
   document.querySelectorAll('dialog [data-close]').forEach((b) => b.addEventListener('click', () => b.closest('dialog').close()));

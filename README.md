@@ -2,8 +2,9 @@
 
 Build pipe spools in an isometric 3D view from the parts in your
 [Part-Library](https://github.com/Ryan1234abcd/Part-Library), set the centre-to-centre dimensions, and
-save the whole spool as **one STEP file**, shrink-wrapped so it stays small. That file imports into
-a Revit family as a single body.
+save the whole spool as **one STEP file**, shrink-wrapped so it stays small. For a Revit family,
+the pipes and fittings can instead be built natively by a Dynamo graph, with pipe connectors and
+references at the ends, and only the valves come as a STEP.
 
 **It runs entirely in your web browser. There is nothing to install.**
 
@@ -70,9 +71,18 @@ The current spool is kept automatically. **BOM** gives a parts list and pipe cut
 | `Del` | delete the selected item and everything beyond it |
 | `Ctrl+Z` / `Ctrl+Y` | undo / redo |
 
-## Export STEP
+## Export
 
-Everything is built in your browser and merged into one solid per line. Choose the level of detail:
+**Export** gives two outputs:
+
+- **One STEP file**: the whole spool, merged into one solid per line. It is the right choice for
+  anything other than a Revit family.
+- **Revit family**: the pipes and simple fittings (elbows, tees, reducers, flanges, caps, nipples,
+  unions) are written as simple shapes that the Dynamo graph builds as **native Revit solids**.
+  Only the valves and strainers go in a (smaller) STEP file. See [Into a Revit family](#into-a-revit-family).
+
+Native fittings have clean outlines at the pipe OD: no cast lettering, no seams. For the STEP,
+choose the level of detail:
 
 | Level | What you get | Typical size |
 |---|---|---|
@@ -80,28 +90,43 @@ Everything is built in your browser and merged into one solid per line. Choose t
 | **Shrink-wrap** | the part's real outside: hidden inner parts (balls, seats, springs) left out, bores and threads filled, bolt holes and other holes and loose bits smaller than the **resolution** removed | small |
 | **Full model** | the original manufacturer geometry | largest |
 
-**Build preview** shows the result, its face count and file size before you download it. Pipes are
-solid unless you tick **Hollow pipes** on the full model. All levels are written without the
-duplicate 2D edge curves and with numbers to 0.001 mm, which roughly halves the file.
-Complex valves take a few seconds each to shrink-wrap the first time.
+**Build preview** shows the result, its face count and file size before you download it.
+- Pipes are solid unless you tick **Hollow pipes** on the full model.
+- All levels are written without the duplicate 2D edge curves and with numbers to 0.001 mm,
+  which roughly halves the file.
+- Complex valves take a few seconds each to shrink-wrap the first time.
 
 ## Into a Revit family
 
-Revit won't host a pipe connector on imported geometry, so the export can also save
-`<spool>-connectors.json` (tick **Revit connector file**): the position, direction and size of
-every open end. The Dynamo graph [`revit/Spool connectors.dyn`](revit/Spool%20connectors.dyn) uses
-it to add the connectors for you:
+Revit only hosts pipe connectors on its own family geometry, never on imported geometry (STEP,
+or DWG that hasn't been exploded). A browser can't write DWG solids, so instead the tool hands
+the simple parts to a Dynamo graph, which builds them natively in the family.
 
-1. In the family editor, **Insert → Import CAD**, pick the STEP, **Positioning: Auto – Origin to
-   origin**, units millimetres.
-2. **Manage → Dynamo**, open `Spool connectors.dyn`, pick the connector file, set the pipe system
-   (e.g. `OtherPipe`, `SupplyHydronic`), choose whether the connector diameter is the nominal size
-   (DN) or the pipe OD, and **Run**.
-3. At each end the graph makes a thin native disc (1 mm, hidden unless you ask) flush with the
-   end face and places a pipe connector on it. Check the connector arrows point out of the spool.
+1. **Export → Revit family.** You get `<spool>-valves.stp` (when there are valves) and
+   `<spool>-revit.json`.
+2. In the family editor, **Insert → Import CAD**, pick the valve STEP, **Positioning: Auto –
+   Origin to origin**, units millimetres.
+3. **Manage → Dynamo**, open [`revit/Spool family.dyn`](revit/Spool%20family.dyn), pick the
+   `-revit.json`, set the pipe system (e.g. `OtherPipe`, `SupplyHydronic`), choose whether the
+   connector diameter is the nominal size (DN) or the pipe OD, and **Run** (once per family;
+   Ctrl+Z undoes a run).
 
-The script is also in [`revit/spool_connectors.py`](revit/spool_connectors.py) to paste into a
-Python node (CPython3) or pyRevit; `node scripts/make-dyn.mjs` rebuilds the graph from it.
+The graph:
+- builds every pipe and fitting as native revolves and extrusions;
+- puts a sized **pipe connector** on the end face of each open end, straight on the native
+  fitting or pipe (on a valve end, on a thin hidden disc, as Revit needs);
+- adds a **reference line on the pipe centreline** and a **reference plane on the end face**
+  (named `E1 end`, `E2 end`…) at each open end, to align the family with adjacent pipes.
+
+The **Result** node lists what it made and any end it couldn't do. Check that the connector
+arrows point out of the spool.
+
+The **One STEP file** export can also save the `.json` (tick **Revit file**). The graph then only
+adds the connectors and references to an imported spool.
+
+The script is also in [`revit/spool_family.py`](revit/spool_family.py), to paste into a Python node
+(CPython3) or pyRevit; `node scripts/make-dyn.mjs` rebuilds the graph from it.
+`tests/revit_stub.py` runs it against a stand-in for the Revit API (part of `npm test`).
 
 ## Develop
 
@@ -116,9 +141,9 @@ npm test             # node tests using the same CAD engine
 | `web/js/app.js` | spool builder UI |
 | `web/js/joints.js` | which ends fit together, pipe sizes, cut length from dimensions |
 | `web/js/kinematics.js` | end-to-end placement |
-| `web/js/wrap.js` | shrink-wrap: simple solids that enclose a part |
+| `web/js/wrap.js` | shrink-wrap: simple solids that enclose a part; native Revit shapes for fittings |
 | `web/js/library.js` | reads Part-Library (`library.json` + `geometry.json`) |
-| `web/js/revit.js`, `revit/` | Revit connector file; Dynamo graph and script that add the connectors |
+| `web/js/revit.js`, `revit/` | Revit file; Dynamo graph and script that build the family (native fittings, connectors, references) |
 | `web/js/cad.js`, `cad-worker.js`, `cad-client.js` | OpenCascade (WebAssembly) in a Web Worker |
 | `scripts/library-geometry.mjs`, `scripts/ends.mjs` | find each part's ends in its STEP model → Part-Library `geometry.json` |
 | `scripts/make-demo.mjs` | copy the built-in demo parts from Part-Library into `library/Demo/` |

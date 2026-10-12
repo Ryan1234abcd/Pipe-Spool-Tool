@@ -189,6 +189,7 @@ input.search { width: 100%; }
 /* export dialog */
 dialog.export { width: 560px; }
 .levels label { margin: 6px 0; }
+.sub-head { margin: 12px 0 2px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; opacity: .75; }
 .res-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
 .res-row input[type=range] { flex: 1; min-width: 140px; }
 .res-row output { font-variant-numeric: tabular-nums; min-width: 44px; }

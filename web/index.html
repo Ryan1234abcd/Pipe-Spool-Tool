@@ -17,7 +17,7 @@
     <button id="btnOpen" title="Open a saved spool">Open…</button>
     <button id="btnSave" title="Save the spool in this browser (Ctrl+S)">Save</button>
     <button id="btnBom" title="Parts list and pipe cut list">BOM</button>
-    <button id="btnExport" class="primary" title="Build and download one STEP file">Export STEP</button>
+    <button id="btnExport" class="primary" title="One STEP file, or a Revit family (native fittings + valve STEP)">Export…</button>
   </div>
 </header>
 
@@ -97,7 +97,12 @@
 </dialog>
 
 <dialog id="dlgExport" class="export">
-  <h3>Export STEP</h3>
+  <h3>Export</h3>
+  <div class="levels" role="radiogroup" aria-label="Output">
+    <label><input type="radio" name="expOut" value="step" checked> <b>One STEP file</b> <span class="hint">the whole spool as one solid</span></label>
+    <label><input type="radio" name="expOut" value="revit"> <b>Revit family</b> <span class="hint">pipes and fittings built as native Revit solids by the Dynamo graph (with connectors and end references); valves as a STEP</span></label>
+  </div>
+  <h4 id="expLevelHead" class="sub-head">Level of detail</h4>
   <div class="levels" role="radiogroup" aria-label="Level of detail">
     <label><input type="radio" name="expLevel" value="envelope"> <b>Envelope</b> <span class="hint">smallest file: smooth outlines, a block for each handle</span></label>
     <label><input type="radio" name="expLevel" value="wrap" checked> <b>Shrink-wrap</b> <span class="hint">follows each part's outline at the resolution below</span></label>
@@ -109,7 +114,7 @@
     <span class="hint">smaller = closer fit, more faces</span>
   </label>
   <label id="expHollowRow"><input type="checkbox" id="expHollow"> Hollow pipes (show the bore)</label>
-  <label title="For the Dynamo graph in the tool's revit/ folder, which adds a pipe connector at each open end in a Revit family"><input type="checkbox" id="expConn" checked> Revit connector file (.json, for the Dynamo graph)</label>
+  <label id="expConnRow" title="For the Dynamo graph in the tool's revit/ folder, which adds a pipe connector and references at each open end in a Revit family"><input type="checkbox" id="expConn" checked> Revit file (.json, for the Dynamo graph: connectors at the ends)</label>
   <div class="export-preview">
     <div id="expView" class="viewport"></div>
     <div id="expStats" class="hint"></div>

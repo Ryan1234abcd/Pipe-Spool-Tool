@@ -1,0 +1,305 @@
+{
+  "Uuid": "94f2ab4a9c22fc0c86cdae69a5c5b90d",
+  "IsCustomNode": false,
+  "Description": "Pipe Spool Tool: builds a spool in a Revit family (native pipes and fittings, connectors and end references).",
+  "Name": "Spool family",
+  "ElementResolver": {
+    "ResolutionMap": {}
+  },
+  "Inputs": [],
+  "Outputs": [],
+  "Nodes": [
+    {
+      "ConcreteType": "CoreNodeModels.Input.Filename, CoreNodeModels",
+      "NodeType": "ExtensionNode",
+      "Id": "b43422aa2bffd12ec89115bd9fb7cab2",
+      "Inputs": [],
+      "Outputs": [
+        {
+          "Id": "4312e56004bfbea1439233eac13a7943",
+          "Name": "",
+          "Description": "File Path",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Replication": "Disabled",
+      "Description": "The <spool>-revit.json file saved by Export",
+      "HintPath": "",
+      "InputValue": ""
+    },
+    {
+      "ConcreteType": "CoreNodeModels.Input.StringInput, CoreNodeModels",
+      "NodeType": "StringInputNode",
+      "Id": "4140ebee416a906ddff1588bcbba03b2",
+      "Inputs": [],
+      "Outputs": [
+        {
+          "Id": "701ff256309ec850f8e5ead0b7b05a94",
+          "Name": "",
+          "Description": "String",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Replication": "Disabled",
+      "Description": "Pipe system classification",
+      "InputValue": "OtherPipe"
+    },
+    {
+      "ConcreteType": "CoreNodeModels.Input.BoolSelector, CoreNodeModels",
+      "NodeType": "BooleanInputNode",
+      "Id": "c09c9cb156fb31f2139147c3182a61eb",
+      "Inputs": [],
+      "Outputs": [
+        {
+          "Id": "b30abcb47330b1b7f6fdbbb007085a45",
+          "Name": "",
+          "Description": "Boolean",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Replication": "Disabled",
+      "Description": "True: connector diameter = nominal size (DN). False: pipe OD",
+      "InputValue": true
+    },
+    {
+      "ConcreteType": "CoreNodeModels.Input.BoolSelector, CoreNodeModels",
+      "NodeType": "BooleanInputNode",
+      "Id": "25144e1f81cfcfe7a9738a5d3c2a5354",
+      "Inputs": [],
+      "Outputs": [
+        {
+          "Id": "44ab5200ad113755eba5ad0f6b7eb44e",
+          "Name": "",
+          "Description": "Boolean",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Replication": "Disabled",
+      "Description": "True: leave the connector discs visible",
+      "InputValue": false
+    },
+    {
+      "ConcreteType": "PythonNodeModels.PythonNode, PythonNodeModels",
+      "NodeType": "PythonScriptNode",
+      "Id": "775dfc9bfb79a8bb138ac19cde498914",
+      "Inputs": [
+        {
+          "Id": "ac903f508b34dfeb4dac4768ccfef716",
+          "Name": "IN[0]",
+          "Description": "Input #0",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        },
+        {
+          "Id": "2e5a143fc42f80deba361d0d85f593cd",
+          "Name": "IN[1]",
+          "Description": "Input #1",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        },
+        {
+          "Id": "4d234b7c44097b5359001369c5434171",
+          "Name": "IN[2]",
+          "Description": "Input #2",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        },
+        {
+          "Id": "00cd05b0ded1b2274b1d634e6c023d46",
+          "Name": "IN[3]",
+          "Description": "Input #3",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Outputs": [
+        {
+          "Id": "f17e85d35ea869a9a7479b3111dab267",
+          "Name": "OUT",
+          "Description": "Result of the python script",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Replication": "Disabled",
+      "Description": "Builds the pipes and fittings as native solids, and adds a pipe connector, a centreline reference line and an end reference plane at every open end",
+      "Code": "# Builds a Pipe Spool Tool spool in a Revit family from the \"<spool>-revit.json\"\n# file the tool exports:\n#   - the pipes and simple fittings as native family solids (revolves and\n#     extrusions), which Revit can host connectors on;\n#   - a pipe connector at every open end of the spool, sized to the pipe;\n#   - at every open end, a reference line on the pipe centreline and a\n#     reference plane on the end face, to align the family with other pipes.\n# Valves come as a separate STEP file: import it into the family with\n# Insert > Import CAD, Positioning \"Origin to origin\", units millimetres.\n# Ends on a valve get their connector on a thin native disc (1 mm, hidden),\n# because Revit won't host a connector on imported geometry.\n#\n# Runs in a Dynamo Python node (CPython3) in the family editor:\n#   IN[0]  path of the -revit.json file\n#   IN[1]  pipe system classification, e.g. \"OtherPipe\", \"SupplyHydronic\",\n#          \"ReturnHydronic\", \"DomesticColdWater\" (default \"OtherPipe\")\n#   IN[2]  True: connector diameter = nominal size (DN); False: pipe OD\n#   IN[3]  True to leave the valve-end discs visible (default hidden)\n# Run it once per family (Ctrl+Z in Revit undoes a run).\nimport json\nimport math\n\nimport clr\nclr.AddReference('RevitAPI')\nclr.AddReference('RevitServices')\nfrom Autodesk.Revit.DB import (Arc, BuiltInParameter, ConnectorElement, CurveArray, CurveArrArray, Line,\n                               Options, Plane, PlanarFace, SketchPlane, Solid, ViewPlan, XYZ,\n                               FilteredElementCollector)\nfrom Autodesk.Revit.DB.Plumbing import PipeSystemType\nfrom RevitServices.Persistence import DocumentManager\nfrom RevitServices.Transactions import TransactionManager\n\nMM = 1.0 / 304.8  # Revit works in feet\nDISC = 1.0 * MM   # valve-end disc thickness\n\ndoc = DocumentManager.Instance.CurrentDBDocument\ncreate = doc.FamilyCreate if doc.IsFamilyDocument else None\npath = IN[0]\nsystem_name = IN[1] if len(IN) > 1 and IN[1] else 'OtherPipe'\nuse_nominal = IN[2] if len(IN) > 2 and IN[2] is not None else True\nvisible = IN[3] if len(IN) > 3 and IN[3] is not None else False\n\n\n# ------------------------------------------------------------------ vectors\ndef xyz(v, scale=1.0):\n    return XYZ(v[0] * scale, v[1] * scale, v[2] * scale)\n\n\ndef pt(v):\n    return xyz(v, MM)\n\n\ndef at(o, a, s, b=None, t=0.0):\n    \"\"\"o + a*s (+ b*t)\"\"\"\n    p = o.Add(a.Multiply(s))\n    return p.Add(b.Multiply(t)) if b is not None else p\n\n\ndef perpendicular(d):\n    for ref in (XYZ(0, 0, 1), XYZ(1, 0, 0)):\n        p = ref.Subtract(d.Multiply(ref.DotProduct(d)))\n        if p.GetLength() > 1e-3:\n            return p.Normalize()\n    return XYZ(0, 1, 0)\n\n\ndef square(x, d):\n    \"\"\"x made exactly square to d (the file's directions are rounded).\"\"\"\n    return x.Subtract(d.Multiply(x.DotProduct(d))).Normalize()\n\n\ndef plane_xy(origin, x, y):\n    return Plane.CreateByOriginAndBasis(origin, x, square(y, x))\n\n\ndef loop_of(points):\n    loop = CurveArray()\n    for i in range(len(points)):\n        a, b = points[i], points[(i + 1) % len(points)]\n        if a.DistanceTo(b) > 1e-6:\n            loop.Append(Line.CreateBound(a, b))\n    return loop\n\n\ndef circle(plane, radius):\n    loop = CurveArray()\n    loop.Append(Arc.Create(plane, radius, 0.0, math.pi))\n    loop.Append(Arc.Create(plane, radius, math.pi, 2.0 * math.pi))\n    return loop\n\n\ndef profile_of(*loops):\n    arr = CurveArrArray()\n    for lp in loops:\n        arr.Append(lp)\n    return arr\n\n\ndef solids_of(element):\n    opts = Options()\n    opts.ComputeReferences = True\n    geo = element.get_Geometry(opts)\n    return [g for g in geo if isinstance(g, Solid) and g.Volume > 0] if geo is not None else []\n\n\n# ------------------------------------------------------------------ native solids\ndef revolve(p):\n    \"\"\"Profile [[h, r]...] about the line o + h*d, closed to the axis.\"\"\"\n    o, d = pt(p['o']), xyz(p['d']).Normalize()\n    x = square(xyz(p['x']), d)\n    pts = p['pts']\n    ring = [[pts[0][0], 0.0]] + pts + [[pts[-1][0], 0.0]]\n    poly = []\n    for h, r in ring:\n        q = at(o, d, h * MM, x, r * MM)\n        if not poly or poly[-1].DistanceTo(q) > 0.5 * MM:\n            poly.append(q)\n    plane = plane_xy(o, d, x)\n    sketch = SketchPlane.Create(doc, plane)\n    h0, h1 = min(q[0] for q in pts), max(q[0] for q in pts)\n    axis = Line.CreateBound(at(o, d, h0 * MM), at(o, d, max(h1, h0 + 1.0) * MM))\n    return [create.NewRevolution(True, profile_of(loop_of(poly)), sketch, axis, 0.0, 2.0 * math.pi)]\n\n\ndef torus(p):\n    \"\"\"Ring segment: tube radius r about the circle of radius R round the axis\n    (c, n), from direction x through `angle` (towards n x x).\"\"\"\n    c, n = pt(p['c']), xyz(p['n']).Normalize()\n    x = square(xyz(p['x']), n)\n    R, r, angle = p['R'] * MM, p['r'] * MM, float(p['angle'])\n    y = n.CrossProduct(x)\n    centre = at(c, x, R)\n    plane = plane_xy(c, x, n)\n    sketch = SketchPlane.Create(doc, plane)\n    tube = circle(plane_xy(centre, x, n), r)\n    for axis in (Line.CreateBound(c, c.Add(n)), Line.CreateBound(c.Add(n), c)):\n        el = create.NewRevolution(True, profile_of(tube), sketch, axis, 0.0, angle)\n        doc.Regenerate()\n        sol = solids_of(el)\n        # Revit turns the profile one way about the axis line: keep the one\n        # that goes from x towards y (the bend's middle is on that side)\n        if sol and sol[0].ComputeCentroid().Subtract(c).DotProduct(y) > 0:\n            return [el]\n        doc.Delete(el.Id)\n    raise Exception('bend could not be oriented')\n\n\ndef extrude(origin, normal, loop_fn, depth):\n    plane = Plane.CreateByNormalAndOrigin(normal, origin)\n    sketch = SketchPlane.Create(doc, plane)\n    return create.NewExtrusion(True, profile_of(loop_fn(plane)), sketch, depth)\n\n\ndef cyl(p):\n    o, d = pt(p['o']), xyz(p['d']).Normalize()\n    return [extrude(o, d, lambda pl: circle(pl, p['r'] * MM), p['L'] * MM)]\n\n\ndef box(p):\n    o = pt(p['o'])\n    z = xyz(p['z']).Normalize()\n    x = square(xyz(p['x']), z)\n    y = square(xyz(p['y']), z)\n    lo, hi = p['min'], p['max']\n    base = at(at(o, x, 0.0), z, lo[2] * MM)\n    corners = [at(at(base, x, a * MM), y, b * MM)\n               for a, b in ((lo[0], lo[1]), (hi[0], lo[1]), (hi[0], hi[1]), (lo[0], hi[1]))]\n    return [extrude(base, z, lambda pl: loop_of(corners), max(hi[2] - lo[2], 1.0) * MM)]\n\n\nBUILD = {'revolve': revolve, 'torus': torus, 'cyl': cyl, 'box': box}\n\n\n# ------------------------------------------------------------------ connectors\ndef end_face(elements, point, normal, reach):\n    \"\"\"Reference of the planar face of the elements on the end: facing out along\n    `normal`, on the pipe axis, nearest the end plane (within `reach`).\"\"\"\n    best, best_off = None, None\n    for el in elements:\n        for s in solids_of(el):\n            for f in s.Faces:\n                if not isinstance(f, PlanarFace) or f.FaceNormal.DotProduct(normal) < 0.9999:\n                    continue\n                off = f.Origin.Subtract(point).DotProduct(normal)\n                if abs(off) > reach:\n                    continue\n                on_axis = point.Add(normal.Multiply(off))\n                hit = f.Project(on_axis)\n                if hit is None or hit.Distance > 0.5 * MM:\n                    continue  # the axis doesn't pass through this face\n                if best is None or abs(off) < best_off:\n                    best, best_off = f.Reference, abs(off)\n    return best\n\n\ndef disc(point, normal, radius):\n    \"\"\"Thin native extrusion ending on the end plane, lying behind it.\"\"\"\n    el = extrude(point.Subtract(normal.Multiply(DISC)), normal, lambda pl: circle(pl, radius), DISC)\n    if not visible:\n        p = el.get_Parameter(BuiltInParameter.IS_VISIBLE_PARAM)\n        if p is not None and not p.IsReadOnly:\n            p.Set(0)\n    return el\n\n\ndef size_connector(conn, dia):\n    for bip in (BuiltInParameter.CONNECTOR_DIAMETER, BuiltInParameter.RBS_PIPE_DIAMETER_PARAM):\n        p = conn.get_Parameter(bip)\n        if p is not None and not p.IsReadOnly:\n            p.Set(dia * MM)\n            return\n\n\n# ------------------------------------------------------------------ references\n_plane_view = []\n\n\ndef plane_views():\n    \"\"\"Views to create reference planes in (the API needs one).\"\"\"\n    if not _plane_view:\n        views = [v for v in FilteredElementCollector(doc).OfClass(ViewPlan) if not v.IsTemplate]\n        _plane_view.extend([doc.ActiveView] + views)\n    return _plane_view\n\n\ndef references(name, point, normal, od):\n    made = []\n    u = perpendicular(normal)\n    v = normal.CrossProduct(u)\n    # centreline: from the end face into the spool\n    length = max(od, 50.0) * MM\n    line = Line.CreateBound(point, point.Subtract(normal.Multiply(length)))\n    curve = create.NewModelCurve(line, SketchPlane.Create(doc, Plane.CreateByNormalAndOrigin(u, point)))\n    curve.ChangeToReferenceLine()\n    made.append('centreline')\n    # reference plane on the end face\n    half = max(od, 50.0) * MM\n    for view in plane_views():\n        try:\n            rp = create.NewReferencePlane(point.Subtract(u.Multiply(half)), point.Add(u.Multiply(half)), v, view)\n        except Exception:\n            continue\n        for k in range(1, 50):\n            try:\n                rp.Name = '%s end' % name if k == 1 else '%s end (%d)' % (name, k)\n                break\n            except Exception:\n                pass  # name taken\n        made.append('end plane')\n        break\n    return made\n\n\n# ------------------------------------------------------------------ run\nout = []\nif create is None:\n    out.append('Open the family (family editor) first: this only works in a family.')\nelse:\n    with open(path) as fh:\n        data = json.load(fh)\n    system = getattr(PipeSystemType, system_name, PipeSystemType.OtherPipe)\n    TransactionManager.Instance.EnsureInTransaction(doc)\n\n    items = {}\n    for s in data.get('solids', []):\n        made = []\n        for p in s.get('prims', []):\n            try:\n                made.extend(BUILD[p['t']](p))\n            except Exception as ex:  # keep going with the rest\n                out.append('%s: a %s could not be built (%s)' % (s.get('name'), p.get('t'), ex))\n        items[s.get('item')] = made\n    if items:\n        out.append('%d native solids for %d pipes and fittings' % (sum(len(v) for v in items.values()), len(items)))\n    doc.Regenerate()\n\n    for e in data.get('ends', []):\n        name = e.get('name')\n        try:\n            point = pt(e['point'])\n            normal = xyz(e['direction']).Normalize()\n            od = float(e.get('od') or 0)\n            if od <= 0:\n                out.append('%s: no size, skipped' % name)\n                continue\n            ref = None\n            if e.get('native') and items.get(e.get('item')):\n                ref = end_face(items[e.get('item')], point, normal, max(30.0, od / 2.0) * MM)\n            on = 'fitting'\n            if ref is None:  # a valve end (imported geometry): a disc to host the connector\n                el = disc(point, normal, od / 2.0 * MM)\n                doc.Regenerate()\n                ref = end_face([el], point, normal, 0.5 * MM)\n                on = 'disc'\n            if ref is None:\n                out.append('%s: no face to put the connector on' % name)\n                continue\n            conn = ConnectorElement.CreatePipeConnector(doc, system, ref)\n            dia = float(e.get('nominal') or od) if use_nominal else od\n            size_connector(conn, dia)\n            refs = references(name, point, normal, od)\n            out.append('%s: connector %s mm on the %s, %s at %s' % (name, dia, on, ' + '.join(refs), e.get('point')))\n        except Exception as ex:  # keep going with the other ends\n            out.append('%s: %s' % (name, ex))\n    TransactionManager.Instance.TransactionTaskDone()\n\nOUT = out\n",
+      "Engine": "CPython3",
+      "VariableInputPorts": true
+    },
+    {
+      "ConcreteType": "CoreNodeModels.Watch, CoreNodeModels",
+      "NodeType": "ExtensionNode",
+      "Id": "f4983f2cf99f24556a855deaf94cd970",
+      "Inputs": [
+        {
+          "Id": "47051eecd5889d238affc52cc96d5992",
+          "Name": "",
+          "Description": "Node to show output from",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Outputs": [
+        {
+          "Id": "d55a2d3306c10f9dec8ccd90768ecf37",
+          "Name": "",
+          "Description": "Node output",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Replication": "Disabled",
+      "Description": "What was added"
+    }
+  ],
+  "Connectors": [
+    {
+      "Start": "4312e56004bfbea1439233eac13a7943",
+      "End": "ac903f508b34dfeb4dac4768ccfef716",
+      "Id": "539515e7f299aa370e41ca14165431cc",
+      "IsHidden": "False"
+    },
+    {
+      "Start": "701ff256309ec850f8e5ead0b7b05a94",
+      "End": "2e5a143fc42f80deba361d0d85f593cd",
+      "Id": "6364d838eeb08b6d65f823a0f08825ac",
+      "IsHidden": "False"
+    },
+    {
+      "Start": "b30abcb47330b1b7f6fdbbb007085a45",
+      "End": "4d234b7c44097b5359001369c5434171",
+      "Id": "bb4a9d3a85ad98234db256664dfe4f2f",
+      "IsHidden": "False"
+    },
+    {
+      "Start": "44ab5200ad113755eba5ad0f6b7eb44e",
+      "End": "00cd05b0ded1b2274b1d634e6c023d46",
+      "Id": "310960c57c68fd21926bb092def20161",
+      "IsHidden": "False"
+    },
+    {
+      "Start": "f17e85d35ea869a9a7479b3111dab267",
+      "End": "47051eecd5889d238affc52cc96d5992",
+      "Id": "4226f90b7d29153e2de0068f5176282b",
+      "IsHidden": "False"
+    }
+  ],
+  "Dependencies": [],
+  "NodeLibraryDependencies": [],
+  "Bindings": [],
+  "View": {
+    "Dynamo": {
+      "ScaleFactor": 1,
+      "HasRunWithoutCrash": false,
+      "IsVisibleInDynamoLibrary": true,
+      "Version": "2.13.1.3887",
+      "RunType": "Manual",
+      "RunPeriod": "1000"
+    },
+    "Camera": {
+      "Name": "Background Preview",
+      "EyeX": -17,
+      "EyeY": 24,
+      "EyeZ": 50,
+      "LookX": 12,
+      "LookY": -13,
+      "LookZ": -58,
+      "UpX": 0,
+      "UpY": 1,
+      "UpZ": 0
+    },
+    "NodeViews": [
+      {
+        "Id": "b43422aa2bffd12ec89115bd9fb7cab2",
+        "Name": "Connector file (.json)",
+        "IsSetAsInput": true,
+        "IsSetAsOutput": false,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": 0,
+        "Y": 0
+      },
+      {
+        "Id": "4140ebee416a906ddff1588bcbba03b2",
+        "Name": "Pipe system",
+        "IsSetAsInput": true,
+        "IsSetAsOutput": false,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": 0,
+        "Y": 120
+      },
+      {
+        "Id": "c09c9cb156fb31f2139147c3182a61eb",
+        "Name": "Diameter = nominal size",
+        "IsSetAsInput": true,
+        "IsSetAsOutput": false,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": 0,
+        "Y": 220
+      },
+      {
+        "Id": "25144e1f81cfcfe7a9738a5d3c2a5354",
+        "Name": "Valve-end discs visible",
+        "IsSetAsInput": true,
+        "IsSetAsOutput": false,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": 0,
+        "Y": 320
+      },
+      {
+        "Id": "775dfc9bfb79a8bb138ac19cde498914",
+        "Name": "Build spool family",
+        "IsSetAsInput": false,
+        "IsSetAsOutput": false,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": 420,
+        "Y": 120
+      },
+      {
+        "Id": "f4983f2cf99f24556a855deaf94cd970",
+        "Name": "Result",
+        "IsSetAsInput": false,
+        "IsSetAsOutput": false,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": 760,
+        "Y": 120
+      }
+    ],
+    "Annotations": [],
+    "X": 0,
+    "Y": 0,
+    "Zoom": 1
+  }
+}

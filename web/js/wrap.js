@@ -5,6 +5,8 @@
 //
 // Levels:  'envelope'  coarsest: smooth hull profiles, one box per handle/bonnet
 //          'wrap'      profiles stepped at `res` mm, handles split into boxes
+//          'native'    as 'wrap', for native Revit solids: bends always rings, tee
+//                      branches stop at the run (then cleanPrims() tidies them)
 //
 // Primitive list (part coordinates, mm):
 //   {t:'revolve', o, d, x, pts:[[h, r]…]}   profile about the line o + h·d, closed to the axis
@@ -225,7 +227,7 @@ export function wrapPart(mesh, geom, info, level = 'wrap', res = 5) {
     const [e1, e2] = ends;
     const parallel = dot(e1.d, e2.d) > 0.999;
     const T1 = len(sub(e1.o, c)), T2 = len(sub(e2.o, c));
-    const b = parallel || Math.min(T1, T2) >= 0.9 * maxOd ? bend(pts, e1, e2, c, parallel) : null;
+    const b = parallel || level === 'native' || Math.min(T1, T2) >= 0.9 * maxOd ? bend(pts, e1, e2, c, parallel) : null;
     if (b) return b;
     return legs(pts, ends, c, level, res);
   }
@@ -258,10 +260,26 @@ function legs(pts, ends, c, level, res) {
   }
   const out = [];
   const radii = [];
+  // native: a branch stops just inside the run, so the run's outside doesn't show on it
+  const runs = segs.filter((s) => s.b !== c);
+  let runR = 0;
+  if (level === 'native' && runs.length) {
+    runs.forEach((s) => {
+      const i = segs.indexOf(s);
+      const d = scale(s.e.d, -1);
+      const prof = axisProfile(groups[i], s.a, d, level, res, { outliers: false });
+      if (prof) runR = Math.max(runR, ...prof.pts.map((q) => q[1]));
+    });
+  }
   segs.forEach((s, i) => {
     const d = scale(s.e.d, -1);
-    const L = dot(sub(s.b, s.a), d);
-    const prof = axisProfile(groups[i], s.a, d, level, res, { outliers: false, hRange: [0, L] });
+    let L = dot(sub(s.b, s.a), d);
+    let G = groups[i];
+    if (runR && s.b === c) {
+      L = Math.max(L * 0.5, L - 0.8 * runR);
+      G = G.filter((p) => dot(sub(p, s.a), d) <= L);
+    }
+    const prof = axisProfile(G, s.a, d, level, res, { outliers: false, hRange: [0, L] });
     if (!prof) return;
     // two equal cylinders meeting square on touch tangentially, which the
     // merge can't handle: make this leg 2% fatter than an equal earlier one
@@ -483,4 +501,102 @@ export function boreFillers(geom, ends, part = {}) {
     out.push({ t: 'cyl', o: from, d: into, r, L: L + (inline ? 0.5 : 0) });
   });
   return out;
+}
+
+// ------------------------------------------------------------ native (Revit)
+//
+// Pipes and simple fittings go to Revit as primitives the Dynamo graph builds
+// as native family solids: clean outlines (no cast lettering), every edge long
+// enough for Revit, end faces exactly on the ends.
+
+/** Douglas–Peucker: drop profile points within tol of the line through their neighbours. */
+function simplify(pts, tol) {
+  if (pts.length < 3) return pts;
+  const [a, b] = [pts[0], pts[pts.length - 1]];
+  const ab = [b[0] - a[0], b[1] - a[1]];
+  const L = Math.hypot(...ab) || 1;
+  let worst = -1, wd = 0;
+  for (let i = 1; i < pts.length - 1; i++) {
+    const dd = Math.abs(ab[0] * (pts[i][1] - a[1]) - ab[1] * (pts[i][0] - a[0])) / L;
+    if (dd > wd) { wd = dd; worst = i; }
+  }
+  if (wd <= tol) return [a, b];
+  return [...simplify(pts.slice(0, worst + 1), tol).slice(0, -1), ...simplify(pts.slice(worst), tol)];
+}
+
+const r2 = (x) => Math.round(x * 100) / 100 || 0;
+
+/**
+ * Tidy a part's primitives for Revit.
+ * @param prims  wrapPart() output (part coordinates)
+ * @param ends   [{o, d, od}] the part's ends
+ */
+export function cleanPrims(prims, ends, { tol = 0.75, minEdge = 1 } = {}) {
+  const radii = ends.map((e) => e.od / 2).filter((x) => x > 0);
+  // cast lettering and seams sit a little proud of the pipe: back to the pipe's outside
+  const snap = (r) => {
+    for (const R of radii) if (r > R && r <= R + Math.max(1.5, 0.04 * R)) return R;
+    return r;
+  };
+  return prims.map((p) => {
+    if (p.t === 'torus' || p.t === 'cyl') return { ...p, r: r2(snap(p.r)) };
+    if (p.t !== 'revolve') return p;
+    // short steps of a stepped profile (a slope or a dome) become one point each, so
+    // they simplify to a smooth line; long flats keep both ends
+    let pts = [];
+    p.pts.forEach(([h, r], i) => {
+      const q = p.pts[i + 1];
+      if (i % 2 === 0 && q && q[1] === r && Math.abs(q[0] - h) <= 2.5 && i > 0 && i + 2 < p.pts.length) {
+        pts.push([(h + q[0]) / 2, r, true]);
+      } else if (!(i % 2 === 1 && pts[pts.length - 1]?.[2])) pts.push([h, r]);
+    });
+    pts = pts.map(([h, r]) => [h, snap(r)]);
+    // the profile's first and last stations on an end face that lies on its axis
+    const d = norm(p.d);
+    for (const e of ends) {
+      const v = sub(e.o, p.o);
+      const h = dot(v, d);
+      if (len(sub(v, scale(d, h))) > 0.5 || Math.abs(Math.abs(dot(norm(e.d), d)) - 1) > 1e-3) continue;
+      for (const i of [0, pts.length - 1]) if (Math.abs(pts[i][0] - h) < 3) {
+        const old = pts[i][0];
+        pts = pts.map((q) => (q[0] === old ? [h, q[1]] : q));
+      }
+    }
+    pts = simplify(pts, tol);
+    // no edge shorter than minEdge (Revit refuses them), counting the closing edges to the axis
+    const out = [];
+    for (const q of pts) {
+      const last = out[out.length - 1];
+      if (last && Math.hypot(q[0] - last[0], q[1] - last[1]) < minEdge) {
+        if (out.length > 1) out[out.length - 1] = [last[0], Math.max(last[1], q[1])];
+        continue;
+      }
+      out.push(q);
+    }
+    if (out.length > 1 && pts.length > 1) out[out.length - 1] = [pts[pts.length - 1][0], out[out.length - 1][1]];
+    const kept = out.filter((q) => q[1] >= minEdge);
+    if (kept.length < 2) return null;
+    return { ...p, pts: kept.map(([h, r]) => [r2(h), r2(r)]) };
+  }).filter(Boolean);
+}
+
+/** Primitives moved by a row-major 4x4 rigid transform. */
+export function placePrims(prims, m) {
+  const P = (v) => [0, 1, 2].map((i) => r2(m[i][0] * v[0] + m[i][1] * v[1] + m[i][2] * v[2] + m[i][3]));
+  const D = (v) => [0, 1, 2].map((i) => Math.round((m[i][0] * v[0] + m[i][1] * v[1] + m[i][2] * v[2]) * 1e6) / 1e6 || 0);
+  return prims.map((p) => {
+    switch (p.t) {
+      case 'revolve': return { ...p, o: P(p.o), d: D(p.d), x: D(p.x) };
+      case 'cyl': return { ...p, o: P(p.o), d: D(p.d) };
+      case 'torus': return { ...p, c: P(p.c), n: D(p.n), x: D(p.x) };
+      case 'box': return { ...p, o: P(p.o), x: D(p.x), y: D(p.y), z: D(p.z) };
+      default: return p;
+    }
+  });
+}
+
+/** A part's primitives for native Revit solids (part coordinates). */
+export function nativePart(mesh, geom, ods) {
+  const ends = geom.ends.map((e, i) => ({ o: e.o, d: e.d, od: ods[i] }));
+  return cleanPrims(wrapPart(mesh, geom, { ods }, 'native', 1), ends);
 }

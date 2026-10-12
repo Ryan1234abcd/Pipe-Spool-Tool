@@ -7,8 +7,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import Module from 'replicad-opencascadejs';
 import { Cad, compactStep } from '../web/js/cad.js';
-import { wrapPart, visibleSolids, boreFillers } from '../web/js/wrap.js';
-import { solve, pipePorts } from '../web/js/kinematics.js';
+import { wrapPart, visibleSolids, boreFillers, nativePart, placePrims } from '../web/js/wrap.js';
+import { solve, pipePorts, openPorts } from '../web/js/kinematics.js';
+import { endFamily, nominalSize } from '../web/js/joints.js';
+import { revitFile } from '../web/js/revit.js';
+import { spawnSync } from 'node:child_process';
+import os from 'node:os';
 import { locateEnds } from '../scripts/ends.mjs';
 
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
@@ -202,4 +206,64 @@ test('a closed valve has its handle turned a quarter about the stem', () => {
   const span = (bb, k) => bb[1][k] - bb[0][k];
   // the lever swaps from along the pipe to across it
   assert.ok(Math.abs(span(a, 0) - span(b, 0)) > 20 || Math.abs(span(a, 1) - span(b, 1)) > 20);
+});
+
+test('Revit family: pipes and fittings as native primitives, built by the Dynamo script', () => {
+  const ports = (id) => geo[id].ends.map((e, i) => {
+    const end = lib.parts[id].ends[i];
+    return { name: String(i), origin: e.o, dir: e.d, up: e.u, od: end.od_mm, end: end.end, family: endFamily(end.end), dn: nominalSize(end) };
+  });
+  const nodes = [
+    { id: 't', type: 'part', part: 'SPET50S10', port: '0' },
+    { id: 'p1', type: 'pipe', od: 60.3, wall: 2.77, length: 250, port: 'A', parent: 't', parentPort: '1' },
+    { id: 'e', type: 'part', part: 'SPB5045S10', port: '0', parent: 'p1', parentPort: 'B', roll: 30 },
+    { id: 'p2', type: 'pipe', od: 60.3, wall: 2.77, length: 200, port: 'A', parent: 'e', parentPort: '1' },
+    { id: 'f', type: 'part', part: 'SPF50E', port: '0', parent: 'p2', parentPort: 'B' },
+    { id: 'v', type: 'part', part: 'CIWCV50', port: '0', parent: 'f', parentPort: '1' },
+    { id: 'c', type: 'part', part: 'SPEC50S10', port: '0', parent: 't', parentPort: '2' },
+    { id: 'p3', type: 'pipe', od: 60.3, wall: 2.77, length: 150, port: 'A', parent: 't', parentPort: '0' },
+  ];
+  // the tee's inlet carries on as a pipe going back the other way: reattach p3 to port 0 by
+  // starting the tee on its branch instead
+  nodes[0].port = '2'; nodes[6].parentPort = '0'; nodes[7].parentPort = '2';
+  const portsOf = (n) => (n.type === 'pipe' ? pipePorts(n.od, n.length).map((q) => ({ ...q, family: 'pipe' })) : ports(n.part));
+  const { placed, errors } = solve(nodes, portsOf);
+  assert.deepEqual(errors, []);
+  const native = [];
+  for (const n of nodes) {
+    const m = placed.get(n.id).matrix;
+    if (n.type === 'pipe') { native.push({ node: n.id, name: 'Pipe', prims: placePrims([{ t: 'cyl', o: [0, 0, 0], d: [1, 0, 0], r: n.od / 2, L: n.length }], m) }); continue; }
+    if (lib.parts[n.part].category === 'valve') continue;
+    const g = geo[n.part];
+    const prims = nativePart(load(n.part).mesh, { ends: g.ends, c: g.c }, lib.parts[n.part].ends.map((e) => e.od_mm));
+    if (n.part === 'SPB5045S10') assert.deepEqual(prims.map((p) => [p.t, p.r]), [['torus', 30.15]], '45° elbow is a ring at the pipe OD');
+    native.push({ node: n.id, name: n.part, prims: placePrims(prims, m) });
+  }
+  // every primitive builds a valid solid; revolve profiles have no edge under 1 mm
+  const built = new Map();
+  for (const g of native) {
+    built.set(g.node, g.prims.map((p) => {
+      if (p.t === 'revolve') for (let i = 1; i < p.pts.length; i++) assert.ok(Math.hypot(p.pts[i][0] - p.pts[i - 1][0], p.pts[i][1] - p.pts[i - 1][1]) >= 0.99, `${g.name}: short edge`);
+      const s = cad.buildPrimitives([p]);
+      assert.ok(cad.isValid(s), `${g.name} ${p.t}`);
+      return s;
+    }));
+  }
+  const open = openPorts(nodes, placed);
+  const file = revitFile(open, (id) => nodes.find((n) => n.id === id), native);
+  assert.equal(file.ends.length, 2, 'the pipe end and the valve outlet');
+  for (const e of file.ends) {
+    if (!e.native) continue;
+    // a planar end face, square to the end, on the end point
+    const circles = built.get(e.item).flatMap((s) => cad.circles(s));
+    assert.ok(circles.some((c) => Math.hypot(...c.centre.map((v, k) => v - e.point[k])) < 0.1 && Math.abs(Math.abs(c.axis.reduce((t, v, k) => t + v * e.direction[k], 0)) - 1) < 1e-6), `${e.name}: end face`);
+  }
+  assert.deepEqual(file.ends.map((e) => e.native).sort(), [false, true]);
+  // run the Dynamo script against a stand-in for the Revit API
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'spool-revit-'));
+  const json = path.join(dir, 'spool-revit.json');
+  fs.writeFileSync(json, JSON.stringify(file));
+  const r = spawnSync('python3', ['-I', path.join(ROOT, 'tests', 'revit_stub.py'), json], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  if (process.env.SHOW) console.log(r.stdout);
 });

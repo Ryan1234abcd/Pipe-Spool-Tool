@@ -1,12 +1,24 @@
 // Web Worker hosting the OpenCascade kernel. The build inlines the
 // replicad-opencascadejs glue (global `Module`) ahead of this file.
 import { Cad } from './cad.js';
-import { wrapPart, visibleSolids, boreFillers } from './wrap.js';
+import { wrapPart, visibleSolids, boreFillers, nativePart, placePrims } from './wrap.js';
 
 let cad = null;
 const shapes = new Map(); // part key -> TopoDS_Shape
 const wrapped = new Map(); // part key|level|res -> simplified shape
 let lastExport = null; // shape of the last build, for download / preview
+const natives = new Map(); // part key -> primitives for a native Revit solid (part coordinates)
+
+/** Pipe or simple fitting as primitives in spool coordinates (for native Revit solids). */
+function nativePrims(it) {
+  if (it.kind === 'pipe') return placePrims([{ t: 'cyl', o: [0, 0, 0], d: [1, 0, 0], r: it.od / 2, L: it.length }], it.matrix);
+  if (!natives.has(it.key)) {
+    const shape = shapes.get(it.key);
+    if (!shape) throw new Error(`Part not loaded: ${it.key}`);
+    natives.set(it.key, nativePart(cad.mesh(shape), it.geom, it.ods));
+  }
+  return placePrims(natives.get(it.key), it.matrix);
+}
 
 function errText(err) {
   if (typeof err === 'number') return 'The CAD kernel could not process this geometry';
@@ -74,16 +86,42 @@ const handlers = {
    * Build the spool. items: [{kind:'pipe', od, id, length, matrix} | {kind:'part', key, matrix, geom, ods, name}]
    * level: 'envelope' | 'wrap' | 'full'; res: shrink-wrap step (mm).
    * Returns stats and a display mesh; the STEP bytes come from writeStep().
+   * split: items marked `native` (pipes, simple fittings) are returned as
+   * primitives for native Revit solids ({node, name, prims}) instead of going
+   * into the STEP, which then holds only the rest (valves).
    */
-  build({ items, level = 'wrap', res = 5, hollow = false, fuse = true, runs = 1 }) {
+  build({ items, level = 'wrap', res = 5, hollow = false, fuse = true, runs = 1, split = false }) {
     const warnings = [];
+    let native = [];
+    if (split) {
+      for (const it of items.filter((x) => x.native)) {
+        try {
+          const prims = nativePrims(it);
+          const g = native.find((x) => x.node === it.node);
+          if (g) g.prims.push(...prims); else native.push({ node: it.node, name: it.name || 'Pipe', prims });
+        } catch (e) { warnings.push(`${it.name || 'A pipe'} could not be described for Revit (${errText(e)}).`); }
+      }
+      items = items.filter((x) => !x.native);
+      native = native.filter((g) => g.prims.length);
+    }
+    const preview = () => { // native solids, for display only
+      const out = [];
+      for (const g of native) for (const p of g.prims) { try { out.push(cad.buildPrimitives([p])); } catch { /* shown in Revit anyway */ } }
+      return out;
+    };
+    if (split && !items.length) {
+      lastExport = null;
+      const mesh = cad.mesh(cad.compound(preview()));
+      return { result: { warnings, solids: 0, faces: 0, mesh, native }, transfer: [mesh.positions.buffer, mesh.indices.buffer] };
+    }
     const placed = items.map((it) => {
       const shape = it.kind === 'pipe' ? cad.makePipe(it.od, level === 'full' && hollow ? it.id : 0, it.length) : partShape(it, level, res, warnings);
       return cad.place(it.kind === 'pipe' ? shape : cad.copy(shape), it.matrix); // keep the cached part clean
     });
     if (!placed.length) throw new Error('The spool is empty');
+    if (split) runs = placed.length; // valves on their own: one body each is expected
     let result = null;
-    if (fuse && placed.length > 1) {
+    if (fuse && !split && placed.length > 1) { // split: valves sit apart, kept as separate bodies
       try {
         const f = cad.fuse(placed);
         if (f.ok) result = f.shape;
@@ -106,15 +144,15 @@ const handlers = {
     }
     if (!result) result = placed.length === 1 ? placed[0] : cad.compound(placed);
     const solids = cad.count(result);
-    if (fuse && solids > runs && !warnings.length) { // separate lines are separate solids
+    if (fuse && !split && solids > runs && !warnings.length) { // separate lines are separate solids
       warnings.push(level === 'full'
         ? `${solids} separate bodies: manufacturer models are often several bodies (handles, bolts) that don't merge.`
         : `The spool is ${solids} separate solids: some parts don't touch.`);
     }
     lastExport = result;
-    const mesh = cad.mesh(result);
     const faces = cad.count(result, 'TopAbs_FACE');
-    return { result: { warnings, solids, faces, mesh }, transfer: [mesh.positions.buffer, mesh.indices.buffer] };
+    const mesh = cad.mesh(split ? cad.compound([cad.copy(result), ...preview()]) : result);
+    return { result: { warnings, solids, faces, mesh, native }, transfer: [mesh.positions.buffer, mesh.indices.buffer] };
   },
 
   /** STEP bytes of the last build. */
