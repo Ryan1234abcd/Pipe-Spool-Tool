@@ -3007,7 +3007,7 @@ const THREE = self.THREE;
 const { CSS2DObject } = __mods["three/addons/CSS2DRenderer.js"];
 const { Viewer, toMatrix4, geometryFromMesh } = __mods["./viewer.js"];
 const { solve, openPorts, pipePorts, applyPoint, mul, rotate, cross, defaultUp } = __mods["./kinematics.js"];
-const { joinOptions, pipeFor, centreToEnd, cutLength, dimFromCut } = __mods["./joints.js"];
+const { joinOptions, directJoin, pipeFor, centreToEnd, cutLength, dimFromCut } = __mods["./joints.js"];
 const { Library, kvGet, kvSet, GROUPS, groupOf } = __mods["./library.js"];
 const { createPartLoader } = __mods["./parts.js"];
 const { startCad, cad } = __mods["./cad-client.js"];
@@ -3401,35 +3401,85 @@ function defaultDim(a, b) {
   return { mode: 'cc', value: Math.ceil(dimFromCut('cc', DEFAULT_CUT, a, b) / 10) * 10 };
 }
 
+// Valves have BSP or flange ends, so on a welded line one needs an adaptor
+// first: a weld nipple (weld end x BSP male) or a flange (weld end x flange face).
+const ADAPTOR_GROUPS = ['Adapters', 'Flanges'];
+const NEEDS_ADAPTOR = ['Valves', 'Strainers'];
+let adaptorCache = { key: null, list: [] };
+
+/** Adaptors that go on the active end: [{part, opt, out}] (out = the end the valve goes on), best first. */
+function adaptorsHere() {
+  const t = activeTarget();
+  if (!t || state.branchOn) return [];
+  const key = `${state.active}|${library.parts.size}`;
+  if (adaptorCache.key === key) return adaptorCache.list;
+  const system = t.n.type === 'part' ? library.parts.get(t.n.part)?.system : state.pipeType;
+  const list = [];
+  for (const a of library.list()) {
+    if (a.kit || a.ports.length !== 2 || !ADAPTOR_GROUPS.includes(groupOf(a))) continue;
+    for (const opt of joinOptions(t.port, a.ports)) {
+      if (opt.port.family !== 'weld') continue; // only welded lines need one (BSP lines take valves as they are)
+      const out = a.ports.find((q) => q !== opt.port);
+      if (!['bspM', 'flange'].includes(out.family)) continue; // takes a valve straight on
+      const score = (a.system === system ? 0 : 2) + (/extend|long/i.test(`${a.type} ${a.name}`) ? 1 : 0) + (opt.viaPipe ? 0.5 : 0);
+      list.push({ part: a, opt, out, score });
+    }
+  }
+  list.sort((x, y) => x.score - y.score || x.part.id.localeCompare(y.part.id));
+  adaptorCache = { key, list };
+  return list;
+}
+
+/** For a valve that doesn't fit the active end: the adaptor and the valve end that goes on it. */
+function adaptorFor(part) {
+  if (!state.nodes.length || !NEEDS_ADAPTOR.includes(groupOf(part))) return null;
+  for (const a of adaptorsHere()) {
+    const port = part.ports.find((vp) => directJoin(a.out, vp));
+    if (port) return { ...a, port };
+  }
+  return null;
+}
+
+const ADAPTOR_TEXT = (a) => (a.out.family === 'flange' ? 'flange' : /nipple/i.test(a.part.type || '') ? 'weld nipple' : 'adaptor');
+
 function addPart(id) {
   const part = library.parts.get(id);
   if (!part) return;
   const opts = optionsFor(part);
-  if (!opts.length) { toast(`${part.name} doesn't fit the ${state.nodes.length ? 'selected end' : 'start size'}.`, true); return; }
-  const opt = opts[0];
-  if (state.branchOn) { addBranch(state.branchOn, part, opt.port); return; }
-  const t = state.nodes.length ? activeTarget() : null;
+  const adaptor = opts.length ? null : adaptorFor(part);
+  if (!opts.length && !adaptor) { toast(`${part.name} doesn't fit the ${state.nodes.length ? 'selected end' : 'start size'}.`, true); return; }
+  if (state.branchOn) { addBranch(state.branchOn, part, opts[0].port); return; }
   commit(() => {
-    const n = { id: newId(), type: 'part', part: id, port: opt.port.name, roll: 0 };
-    if (!t) { n.startDir = state.startDir; state.nodes.push(n); needFit = true; } else {
-      let parent = t.nodeId, parentPort = t.port.name;
-      if (opt.viaPipe) {
-        const spec = pipeFor(t.port);
-        const pipe = { id: newId(), type: 'pipe', ...spec, port: 'A', parent, parentPort, roll: 0 };
-        const a = t.n.type === 'part' ? sideOf(t.n, t.port.name) : null;
-        const b = { c2e: centreToEnd(opt.port, part.centre), engage: opt.port.family === 'bspF' ? opt.port.engage : 0 };
-        pipe.dim = defaultDim(a, b);
-        state.nodes.push(pipe);
-        parent = pipe.id; parentPort = 'B';
-      }
-      Object.assign(n, { parent, parentPort });
-      state.nodes.push(n);
-    }
-    const next = runPort(part.ports, n.port);
-    state.active = next ? `${n.id}:${next}` : null;
-    state.selected = n.id;
-    lastAdded = n.id;
+    if (adaptor) { // the adaptor first, then the valve straight on it
+      placePart(adaptor.part, adaptor.opt, activeTarget());
+      placePart(part, { port: adaptor.port, viaPipe: false }, activeTarget());
+      toast(`Added a ${adaptor.part.name} for the valve.`);
+    } else placePart(part, opts[0], state.nodes.length ? activeTarget() : null);
   });
+}
+
+/** Put a part on the end t (or as the first part), joined by opt.port; inside commit(). */
+function placePart(part, opt, t) {
+  const id = part.id;
+  const n = { id: newId(), type: 'part', part: id, port: opt.port.name, roll: 0 };
+  if (!t) { n.startDir = state.startDir; state.nodes.push(n); needFit = true; } else {
+    let parent = t.nodeId, parentPort = t.port.name;
+    if (opt.viaPipe) {
+      const spec = pipeFor(t.port);
+      const pipe = { id: newId(), type: 'pipe', ...spec, port: 'A', parent, parentPort, roll: 0 };
+      const a = t.n.type === 'part' ? sideOf(t.n, t.port.name) : null;
+      const b = { c2e: centreToEnd(opt.port, part.centre), engage: opt.port.family === 'bspF' ? opt.port.engage : 0 };
+      pipe.dim = defaultDim(a, b);
+      state.nodes.push(pipe);
+      parent = pipe.id; parentPort = 'B';
+    }
+    Object.assign(n, { parent, parentPort });
+    state.nodes.push(n);
+  }
+  const next = runPort(part.ports, n.port);
+  state.active = next ? `${n.id}:${next}` : null;
+  state.selected = n.id;
+  lastAdded = n.id;
 }
 
 /** Stab a weld nipple into a pipe, half way along it, to start a branch. */
@@ -3605,7 +3655,7 @@ function renderPartList() {
       : '<span class="hint">No open end selected – click a blue marker in the view.</span>';
   const q = $('partSearch').value.toLowerCase().trim();
   const words = q.split(/\s+/).filter(Boolean);
-  const fits = (empty || t || state.branchOn) ? library.list().filter((p) => optionsFor(p).length
+  const fits = (empty || t || state.branchOn) ? library.list().filter((p) => (optionsFor(p).length || adaptorFor(p))
     && (!empty || inPipeType(p) || SHARED_SYSTEMS.includes(p.system))
     && words.every((w) => `${p.search || ''} ${p.name} ${p.id}`.toLowerCase().includes(w))) : [];
   // filter chips: one per part group that has something fitting here
@@ -3626,7 +3676,10 @@ function renderPartList() {
   for (const [g, ps] of [...groups].filter(([, ps]) => ps.length)) {
     html += `<div class="cat">${esc(g)}</div>`;
     for (const p of ps.sort((a, b) => (a.type_name || '').localeCompare(b.type_name || '') || (a.ports[0]?.od || 0) - (b.ports[0]?.od || 0) || a.id.localeCompare(b.id))) {
-      const via = !empty && optionsFor(p)[0].viaPipe ? '<span class="badge ok" title="Joined with a pipe">+ pipe</span>' : '';
+      const o = empty ? null : optionsFor(p)[0];
+      const ad = !empty && !o ? adaptorFor(p) : null;
+      const via = ad ? `<span class="badge ok" title="Added with a ${esc(ad.part.name)}${ad.opt.viaPipe ? ' (and a pipe)' : ''}">+ ${ADAPTOR_TEXT(ad)}</span>`
+        : o?.viaPipe ? '<span class="badge ok" title="Joined with a pipe">+ pipe</span>' : '';
       const twin = ps.some((q) => q !== p && q.type_name === p.type_name && q.size_label === p.size_label);
       html += `<div class="item" data-part="${esc(p.id)}" title="${esc(`${p.id} – ${p.description}`)}">${esc(p.type_name || p.type)}${twin ? ` <span class="hint">${esc(p.kit ? '' : p.id)}</span>` : ''}<span class="meta">${via} ${esc(p.size_label || '')}</span></div>`;
     }

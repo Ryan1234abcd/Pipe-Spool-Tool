@@ -33,6 +33,9 @@ try it before opening the library.
    (flanges match by their drilling). Click any blue marker to carry on from another open end.
    The chips above the list pick one part type at a time (Elbows & bends, Tees, Valves…, or All).
    Flanged joints match by size only (DN), whatever the flange standard.
+   **Valves on a welded line** (Sch 10S pipe, dairy tube) are listed too, marked **+ weld nipple**
+   or **+ flange**. Their ends are BSP or flanged, so clicking one adds that adaptor first (a weld
+   nipple for BSP valves, a flange for wafer and lugged valves), then the valve on it.
 3. **Rotate and connect.** Select a part and roll it with **⟳ 90°** / **⟲ 90°** (`R` / `Shift+R`) or
    type an angle. **Connected by** picks which end it is joined by (a tee's run end or its branch);
    **Next part on** picks which free end the next part goes on.
