@@ -101,6 +101,19 @@ kbd { color: var(--muted); font-size: 10px; border: 1px solid var(--border); bor
 .badge.ok { background: var(--badge-ok-bg); color: var(--badge-ok); }
 .tree .item { font-family: inherit; }
 .tree .item.err { color: var(--bad); }
+.tree .item .nm { min-width: 0; }
+.tree .item.ref { outline: 2px dashed var(--accent-2); outline-offset: -2px; }
+.tree .item { position: relative; }
+.tree .item .acts { display: flex; gap: 2px; visibility: hidden; position: absolute; right: 4px; top: 50%; transform: translateY(-50%); background: inherit; padding-left: 4px; border-radius: 4px; }
+.tree .item:hover .acts, .tree .item.sel .acts, .tree .item:focus-within .acts { visibility: visible; }
+@media (hover: none) { .tree .item .acts { visibility: visible; } }
+.tree .item .acts button { padding: 0 5px; min-width: 22px; line-height: 18px; font-size: 12px; }
+.tree .item .acts button[data-act="del"]:hover { color: var(--bad); }
+.tree .item .acts button:disabled { opacity: .35; cursor: default; }
+#props .align { margin: 8px 0; padding: 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--sel-warm); }
+#props .align .btns { margin-top: 6px; }
+#props .ends { margin: 6px 0; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+#props .ends button { font-size: 12px; padding: 2px 6px; }
 
 .viewport-wrap { flex: 1; display: flex; flex-direction: column; min-width: 0; padding: 6px 0; }
 .view-toolbar { display: flex; gap: 4px; align-items: center; padding-bottom: 6px; flex-wrap: wrap; }
@@ -212,6 +225,7 @@ dialog.export { width: 560px; }
 .seg button:last-child { border-radius: 0 4px 4px 0; border-left: none; }
 .seg button.on { background: var(--sel); border-color: var(--accent-2); }
 button.link { border: none; background: none; color: var(--accent-2); padding: 0 2px; text-decoration: underline; }
+button.link.danger { color: var(--bad); }
 .head-row { display: flex; align-items: center; justify-content: space-between; }
 .head-row button { text-transform: none; letter-spacing: 0; font-size: 11px; padding: 1px 8px; }
 [hidden] { display: none !important; }

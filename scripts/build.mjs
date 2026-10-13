@@ -25,6 +25,7 @@ const APP_MODULES = [
   ['js/kinematics.js', './kinematics.js'],
   ['js/joints.js', './joints.js'],
   ['js/revit.js', './revit.js'],
+  ['js/edit.js', './edit.js'],
   ['js/ui.js', './ui.js'],
   ['js/library.js', './library.js'],
   ['js/cad-client.js', './cad-client.js'],

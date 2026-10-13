@@ -53,6 +53,26 @@ try it before opening the library.
 7. **Valve handles.** Ball valves and lever butterfly valves have **Handle: Open / Closed**; closed
    turns the lever (and the ball) a quarter turn about the stem, in the view and the export.
 
+8. **Edit the line.** In the **Spool** list each part has **↑ ↓ ×** (on hover, or on the selected
+   row):
+   - **↑ / ↓** swap a fitting with the one before or after it in its line (two-ended fittings; the
+     pipes between keep their dimensions). A swap whose ends wouldn't fit is refused.
+   - **×** (or `Del`) removes just that part or pipe and closes the gap. Pipes either side of a
+     removed valve merge into one, a pipe grows to reach the next part, or the next part joins
+     straight on. What is beyond stays where it is; if it can't join up (after an elbow, say), it
+     becomes its own run, still in place. Removing the first fitting keeps the rest.
+     **Delete with everything beyond** (`Shift+Del`) is the old delete.
+   - **Insert part…** on a pipe puts a part in its middle. A valve on a welded line gets a weld
+     nipple or flange either side. **Insert after…** on a fitting puts one between it and the
+     next. The pipe is split or shortened so what is beyond doesn't move.
+   - **+ pipe on end n** (in a part's panel) puts a straight pipe on an open end, including the
+     first part's start end. Or click any blue marker and press `P`.
+9. **Align.** Select a part or pipe, click **Align…**, then click the part or pipe to line it up
+   with. Choose which points (centre, an end face, a pipe end), and **same X**, **same Y** or
+   **same RL (Z)**. The nearest pipe behind it that runs along that axis changes length to suit.
+   Tick **Keep lined up** to lock it: the pipe then follows whenever anything else changes (🔒 in
+   the list; **Unlock** in the panel).
+
 **RJT unions** are one part: an RJT female half and an RJT male half of the same size come screwed
 together (e.g. *RJT Union BSP male × BSP male*), and only their outer ends connect. The BOM lists
 both halves.
@@ -71,7 +91,9 @@ The current spool is kept automatically. **BOM** gives a parts list and pipe cut
 | `X` | turn the selected part round |
 | `P` | plain pipe on the orange end |
 | `N` | next open end |
-| `Del` | delete the selected item and everything beyond it |
+| `Del` | remove the selected item and close the gap |
+| `Shift+Del` | delete the selected item and everything beyond it |
+| `Esc` | cancel insert / branch / align, or clear the selection |
 | `Ctrl+Z` / `Ctrl+Y` | undo / redo |
 
 ## Export
@@ -144,6 +166,7 @@ npm test             # node tests using the same CAD engine
 | `web/js/app.js` | spool builder UI |
 | `web/js/joints.js` | which ends fit together, pipe sizes, cut length from dimensions |
 | `web/js/kinematics.js` | end-to-end placement |
+| `web/js/edit.js` | remove and close the gap, move up/down, insert, align |
 | `web/js/wrap.js` | shrink-wrap: simple solids that enclose a part; native Revit shapes for fittings |
 | `web/js/library.js` | reads Part-Library (`library.json` + `geometry.json`) |
 | `web/js/revit.js`, `revit/` | Revit file; Dynamo graph and script that build the family (native fittings, connectors, references) |

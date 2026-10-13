@@ -91,7 +91,8 @@ export const START_DIRS = {
 
 /** Virtual port the root node attaches to: at `origin`, flow leaving along startDir. */
 export function rootTarget(node) {
-  if (node.target) return node.target; // e.g. the start of a parallel line
+  if (node.fix) return node.fix; // a run cut loose where it was (edit.js)
+  if (node.target) return node.target;
   const dir = START_DIRS[node.startDir || '+X'] || [1, 0, 0];
   const up = Math.abs(dir[2]) > 0.5 ? [1, 0, 0] : [0, 0, 1];
   return { origin: node.origin || [0, 0, 0], dir, up };

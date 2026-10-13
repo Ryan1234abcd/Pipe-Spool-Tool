@@ -13,6 +13,7 @@ import { createPartLoader } from './parts.js';
 import { startCad, cad } from './cad-client.js';
 import { toast, esc, ask, saveFile } from './ui.js';
 import { revitFile, NATIVE_GROUPS } from './revit.js';
+import { runPort, canJoin, removeNode, moveNode, insertChain, alignFix, alignPipes } from './edit.js';
 
 const COLORS = { pipe: 0x9aabbd, part: 0xd38a3a, fitting: 0x8195ab };
 const SPOOLS_KEY = 'pipe-spool-tool.spools.v2';
@@ -30,6 +31,9 @@ const state = {
   pipeType: 'pipe-sch10s', // Part-Library system the spool starts in
   startDir: '+X', // which way the first part runs
   branchOn: null, // pipe id while picking a part to stab into it
+  insertAt: null, // {pipe} or {node, port} while picking a part to insert there
+  alignFor: null, // node id while lining it up with another (alignRef once picked)
+  alignRef: null,
   startSize: null,
   nodes: [],
   selected: null,
@@ -139,9 +143,8 @@ function jointGap(n) {
 const meshes = new Map(); // part id -> THREE geometry
 let buildSeq = 0;
 
-async function rebuild() {
-  const seq = ++buildSeq;
-  // pipe lengths from their dimensions
+/** Pipe lengths from their dimensions, then where everything goes. */
+function solveAll() {
   for (const n of state.nodes) {
     if (n.type !== 'pipe') continue;
     const { a, b } = pipeSides(n);
@@ -149,6 +152,41 @@ async function rebuild() {
   }
   for (const n of state.nodes) n.gap = jointGap(n);
   solved = solve(state.nodes, localPorts); // start points sit at their own origin (rootTarget)
+}
+
+const editCtx = () => ({ nodes: state.nodes, portsOf: localPorts, placed: solved.placed, centreOf });
+
+/** Write a pipe's cut length back as its dimension, in its own mode (C-C or cut). */
+function setCut(pipe, cut) {
+  const mode = pipe.dim?.mode || 'cc';
+  const { a, b } = pipeSides(pipe);
+  pipe.dim = { mode, value: round(dimFromCut(mode, Math.max(0, cut), a, b), 2) };
+}
+
+/** Locked alignments: change their pipes until everything lines up again. */
+function applyLocks() {
+  for (let pass = 0; pass < 4; pass++) {
+    let changed = false;
+    for (const n of state.nodes) {
+      if (!n.align) continue;
+      try {
+        const f = alignFix(editCtx(), { ...n.align, id: n.id });
+        const pipe = nodeById(f.pipe);
+        if (Math.abs(f.cut - pipe.cut) > 0.01) { setCut(pipe, f.cut); changed = true; }
+      } catch (e) {
+        toast(`${nodeLabel(n)} is no longer lined up: ${e.message}`, true);
+        delete n.align;
+      }
+    }
+    if (!changed) return;
+    solveAll();
+  }
+}
+
+async function rebuild() {
+  const seq = ++buildSeq;
+  solveAll();
+  if (state.nodes.some((n) => n.align)) applyLocks();
   for (const n of state.nodes) {
     if (n.type === 'pipe' && n.cut < 0) solved.errors.push({ id: n.id, message: `Dimension too short by ${round(-n.cut)} mm` });
   }
@@ -362,16 +400,6 @@ function commit(fn) {
 function undo() { if (!undoStack.length) return; redoStack.push(snapshot()); restore(undoStack.pop()); rebuild(); }
 function redo() { if (!redoStack.length) return; undoStack.push(snapshot()); restore(redoStack.pop()); rebuild(); }
 
-const dot3 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-
-/** The end that continues the run: the one pointing most away from the attach end. */
-function runPort(ports, attachName) {
-  const own = ports.find((p) => p.name === attachName);
-  const free = ports.filter((p) => p.name !== attachName);
-  if (own && free.length > 1) free.sort((a, b) => dot3(a.dir, own.dir) - dot3(b.dir, own.dir));
-  return free[0]?.name || null;
-}
-
 /** The open end the next part goes on, as a port with family/od. */
 function activeTarget() {
   if (!state.active) return null;
@@ -405,37 +433,88 @@ function defaultDim(a, b) {
 // first: a weld nipple (weld end x BSP male) or a flange (weld end x flange face).
 const ADAPTOR_GROUPS = ['Adapters', 'Flanges'];
 const NEEDS_ADAPTOR = ['Valves', 'Strainers'];
-let adaptorCache = { key: null, list: [] };
+const adaptorCache = new Map();
 
-/** Adaptors that go on the active end: [{part, opt, out}] (out = the end the valve goes on), best first. */
-function adaptorsHere() {
-  const t = activeTarget();
-  if (!t || state.branchOn) return [];
-  const key = `${state.active}|${library.parts.size}`;
-  if (adaptorCache.key === key) return adaptorCache.list;
-  const system = t.n.type === 'part' ? library.parts.get(t.n.part)?.system : state.pipeType;
+/**
+ * Adaptors that go straight onto an end (a weld end or pipe end, welded close-coupled):
+ * [{part, opt, out}] (out = the end a valve goes on), best first.
+ */
+function adaptorsOnto(end, system) {
+  if (!end || !['weld', 'pipe'].includes(end.family) || end.threaded) return []; // BSP lines take valves as they are
+  const key = `${end.family}|${end.od}|${system}|${library.parts.size}`;
+  if (adaptorCache.has(key)) return adaptorCache.get(key);
   const list = [];
   for (const a of library.list()) {
     if (a.kit || a.ports.length !== 2 || !ADAPTOR_GROUPS.includes(groupOf(a))) continue;
-    for (const opt of joinOptions(t.port, a.ports)) {
-      if (opt.port.family !== 'weld') continue; // only welded lines need one (BSP lines take valves as they are)
-      const out = a.ports.find((q) => q !== opt.port);
+    for (const port of a.ports) {
+      if (port.family !== 'weld' || !canJoin(end, port)) continue;
+      const out = a.ports.find((q) => q !== port);
       if (!['bspM', 'flange'].includes(out.family)) continue; // takes a valve straight on
-      const score = (a.system === system ? 0 : 2) + (/extend|long/i.test(`${a.type} ${a.name}`) ? 1 : 0) + (opt.viaPipe ? 0.5 : 0);
-      list.push({ part: a, opt, out, score });
+      const score = (a.system === system ? 0 : 2) + (/extend|long/i.test(`${a.type} ${a.name}`) ? 1 : 0);
+      list.push({ part: a, opt: { port, viaPipe: false }, out, score });
     }
   }
   list.sort((x, y) => x.score - y.score || x.part.id.localeCompare(y.part.id));
-  adaptorCache = { key, list };
+  adaptorCache.set(key, list);
   return list;
+}
+
+const systemAt = (n) => (n?.type === 'part' ? library.parts.get(n.part)?.system : state.pipeType);
+
+/** An adaptor joining `end` to the valve end `vp` (either way round): {part, port (on end), run (to vp)}. */
+function adaptorBetween(end, vp, system) {
+  for (const a of adaptorsOnto(end, system)) if (directJoin(a.out, vp)) return a;
+  return null;
 }
 
 /** For a valve that doesn't fit the active end: the adaptor and the valve end that goes on it. */
 function adaptorFor(part) {
-  if (!state.nodes.length || !NEEDS_ADAPTOR.includes(groupOf(part))) return null;
-  for (const a of adaptorsHere()) {
+  if (!state.nodes.length || state.branchOn || !NEEDS_ADAPTOR.includes(groupOf(part))) return null;
+  const t = activeTarget();
+  if (!t) return null;
+  for (const a of adaptorsOnto(t.port, systemAt(t.n))) {
     const port = part.ports.find((vp) => directJoin(a.out, vp));
     if (port) return { ...a, port };
+  }
+  return null;
+}
+
+/**
+ * Parts to insert for `part` at state.insertAt: [{part, port, run}] (with a weld
+ * nipple or flange either side of a valve on a welded line), or null.
+ */
+function insertChainFor(part) {
+  const at = state.insertAt;
+  if (!at || part.ports.length !== 2) return null;
+  let e1, e2, sys;
+  if (at.pipe) {
+    const pipe = nodeById(at.pipe);
+    const ps = localPorts(pipe);
+    e1 = ps.find((q) => q.name === 'B'); e2 = ps.find((q) => q.name === 'A'); sys = systemAt(nodeById(pipe.parent));
+  } else {
+    const x = nodeById(at.node);
+    e1 = localPorts(x)?.find((q) => q.name === at.port);
+    const next = state.nodes.find((c) => c.parent === x.id && c.parentPort === at.port && !c.branch);
+    e2 = next ? localPorts(next)?.find((q) => q.name === next.port) : null;
+    sys = systemAt(x);
+  }
+  if (!e1) return null;
+  const valve = NEEDS_ADAPTOR.includes(groupOf(part));
+  for (const port of part.ports) {
+    const run = part.ports.find((q) => q !== port);
+    const chain = [];
+    if (!canJoin(e1, port)) {
+      const a = valve && adaptorBetween(e1, port, sys);
+      if (!a) continue;
+      chain.push({ part: a.part.id, port: a.opt.port.name, run: a.out.name });
+    }
+    chain.push({ part: part.id, port: port.name, run: run.name });
+    if (e2 && !canJoin(run, e2)) {
+      const a = valve && adaptorBetween(e2, run, sys);
+      if (!a) continue;
+      chain.push({ part: a.part.id, port: a.out.name, run: a.opt.port.name }); // turned round: valve side first
+    }
+    return chain;
   }
   return null;
 }
@@ -445,6 +524,19 @@ const ADAPTOR_TEXT = (a) => (a.out.family === 'flange' ? 'flange' : /nipple/i.te
 function addPart(id) {
   const part = library.parts.get(id);
   if (!part) return;
+  if (state.insertAt) {
+    const chain = insertChainFor(part);
+    if (!chain) { toast(`${part.name} doesn't fit there.`, true); return; }
+    const at = state.insertAt;
+    commit(() => {
+      const res = insertChain(editCtx(), at, chain, newId);
+      applyEdit(res);
+      state.insertAt = null;
+      state.selected = res.made[chain.findIndex((c) => c.part === part.id)];
+      if (chain.length > 1) toast(`Inserted with ${chain.length === 3 ? 'an adaptor either side' : 'an adaptor'}.`);
+    });
+    return;
+  }
   const opts = optionsFor(part);
   const adaptor = opts.length ? null : adaptorFor(part);
   if (!opts.length && !adaptor) { toast(`${part.name} doesn't fit the ${state.nodes.length ? 'selected end' : 'start size'}.`, true); return; }
@@ -540,6 +632,38 @@ function removeSubtree(id) {
     }
   }
   state.nodes = state.nodes.filter((n) => !kill.has(n.id));
+}
+
+/** Apply an edit.js result: the new nodes, pipe lengths and branch positions. */
+function applyEdit(res) {
+  state.nodes = res.nodes;
+  for (const [id, cut] of res.cuts) { const pipe = nodeById(id); if (pipe) { pipe.cut = cut; setCut(pipe, cut); } }
+  for (const [id, x] of res.branchX) {
+    const c = nodeById(id);
+    const { a } = pipeSides(nodeById(c.parent));
+    c.branch = { ...c.branch, along: round(x + (a ? a.c2e - (a.engage || 0) : 0), 1) };
+  }
+  for (const n of state.nodes) if (n.align && (!nodeById(n.align.ref) || !nodeById(n.align.pipe))) delete n.align;
+  if (res.msg) toast(res.msg);
+}
+
+/** Remove one part or pipe and close the gap (the rest stays where it is). */
+function removeOne(id) {
+  if (!nodeById(id)) return;
+  commit(() => {
+    applyEdit(removeNode(editCtx(), id));
+    if (state.selected === id) state.selected = null;
+    if (state.active?.startsWith(`${id}:`)) state.active = null;
+  });
+}
+
+/** Move a fitting up (-1, towards the start) or down (+1) its line. */
+function moveOne(id, dir) {
+  commit(() => {
+    const res = moveNode(editCtx(), id, dir);
+    applyEdit(res);
+    state.selected = res.moved;
+  });
 }
 
 /** Delete a node and everything beyond it (a part also takes the pipe leading to it). */
@@ -646,8 +770,12 @@ function renderPartList() {
   $('pipeTypeRow').hidden = !empty;
   $('startDirRow').hidden = !empty;
   if (state.branchOn && !nodeById(state.branchOn)) state.branchOn = null;
-  const t = empty || state.branchOn ? null : activeTarget();
-  $('nextEnd').innerHTML = state.branchOn
+  if (state.insertAt && !nodeById(state.insertAt.pipe || state.insertAt.node)) state.insertAt = null;
+  const ins = state.insertAt;
+  const t = empty || state.branchOn || ins ? null : activeTarget();
+  $('nextEnd').innerHTML = ins
+    ? `Insert ${ins.pipe ? 'into' : 'after'}: <b>${esc(nodeLabel(nodeById(ins.pipe || ins.node)))}</b> – pick a part <button id="brCancel" class="link">Cancel</button>`
+    : state.branchOn
     ? `Branch on: <b>${esc(nodeLabel(nodeById(state.branchOn)))}</b> – pick a weld nipple <button id="brCancel" class="link">Cancel</button>`
     : empty
     ? '<span class="hint">Pick the first part. The orange end shows where the next one goes.</span>'
@@ -655,7 +783,11 @@ function renderPartList() {
       : '<span class="hint">No open end selected – click a blue marker in the view.</span>';
   const q = $('partSearch').value.toLowerCase().trim();
   const words = q.split(/\s+/).filter(Boolean);
-  const fits = (empty || t || state.branchOn) ? library.list().filter((p) => (optionsFor(p).length || adaptorFor(p))
+  const inlinePart = (p) => p.ports.length === 2 && p.ports[0].dir.reduce((s2, v, i) => s2 + v * p.ports[1].dir[i], 0) < -0.999;
+  const chains = new Map();
+  if (ins) for (const p of library.list()) if (inlinePart(p)) { const c = insertChainFor(p); if (c) chains.set(p.id, c); }
+  const fits = ins ? library.list().filter((p) => chains.has(p.id) && words.every((w) => `${p.search || ''} ${p.name} ${p.id}`.toLowerCase().includes(w)))
+    : (empty || t || state.branchOn) ? library.list().filter((p) => (optionsFor(p).length || adaptorFor(p))
     && (!empty || inPipeType(p) || SHARED_SYSTEMS.includes(p.system))
     && words.every((w) => `${p.search || ''} ${p.name} ${p.id}`.toLowerCase().includes(w))) : [];
   // filter chips: one per part group that has something fitting here
@@ -676,9 +808,11 @@ function renderPartList() {
   for (const [g, ps] of [...groups].filter(([, ps]) => ps.length)) {
     html += `<div class="cat">${esc(g)}</div>`;
     for (const p of ps.sort((a, b) => (a.type_name || '').localeCompare(b.type_name || '') || (a.ports[0]?.od || 0) - (b.ports[0]?.od || 0) || a.id.localeCompare(b.id))) {
-      const o = empty ? null : optionsFor(p)[0];
-      const ad = !empty && !o ? adaptorFor(p) : null;
-      const via = ad ? `<span class="badge ok" title="Added with a ${esc(ad.part.name)}${ad.opt.viaPipe ? ' (and a pipe)' : ''}">+ ${ADAPTOR_TEXT(ad)}</span>`
+      const chain = chains.get(p.id);
+      const o = empty || chain ? null : optionsFor(p)[0];
+      const ad = !empty && !o && !chain ? adaptorFor(p) : null;
+      const via = chain ? (chain.length > 1 ? `<span class="badge ok" title="Inserted with ${chain.length === 3 ? 'an adaptor either side' : 'an adaptor'}">+ adaptor${chain.length === 3 ? 's' : ''}</span>` : '')
+        : ad ? `<span class="badge ok" title="Added with a ${esc(ad.part.name)}${ad.opt.viaPipe ? ' (and a pipe)' : ''}">+ ${ADAPTOR_TEXT(ad)}</span>`
         : o?.viaPipe ? '<span class="badge ok" title="Joined with a pipe">+ pipe</span>' : '';
       const twin = ps.some((q) => q !== p && q.type_name === p.type_name && q.size_label === p.size_label);
       html += `<div class="item" data-part="${esc(p.id)}" title="${esc(`${p.id} – ${p.description}`)}">${esc(p.type_name || p.type)}${twin ? ` <span class="hint">${esc(p.kit ? '' : p.id)}</span>` : ''}<span class="meta">${via} ${esc(p.size_label || '')}</span></div>`;
@@ -686,7 +820,16 @@ function renderPartList() {
   }
   const note = partGroup !== 'All' && shown === 'All' && fits.length ? `<p class="hint">No ${esc(partGroup.toLowerCase())} fit here – showing everything that does.</p>` : '';
   $('partList').innerHTML = note + (html || `<p class="hint">${!library.parts.size ? 'Open your Part-Library folder to see parts.' : 'Nothing in the library fits here.'}</p>`);
-  if ($('brCancel')) $('brCancel').onclick = () => { state.branchOn = null; renderPartList(); };
+  if ($('brCancel')) $('brCancel').onclick = () => { state.branchOn = null; state.insertAt = null; renderPartList(); };
+}
+
+/** A click on a node: selects it, or picks it as the part to line up with. */
+function pickNode(id) {
+  if (state.alignFor && id !== state.alignFor) {
+    state.alignRef = id;
+    state.selected = state.alignFor;
+  } else state.selected = id;
+  draw(); renderTree(); renderProps();
 }
 
 function renderTree() {
@@ -696,9 +839,15 @@ function renderTree() {
     for (const n of state.nodes.filter((x) => (x.parent || null) === parent)) {
       const extra = n.type === 'pipe' ? `${round(n.cut)} mm` : n.type === 'start' ? (n.origin || [0, 0, 0]).map((v) => round(v)).join(', ') : (partOf(n)?.size_label || '');
       const name = n.type === 'pipe' ? 'Pipe' : n.type === 'start' ? 'Start point' : (partOf(n)?.type_name || n.part);
-      const cls = ['item', n.id === state.selected ? 'sel' : '', errById.has(n.id) ? 'err' : ''].join(' ');
+      const cls = ['item', n.id === state.selected ? 'sel' : '', errById.has(n.id) ? 'err' : '', n.id === state.alignRef ? 'ref' : ''].join(' ');
+      const two = n.type === 'part' && (partOf(n)?.ports.length || 0) === 2;
+      const btn = (act, text, title, off = false) => `<button data-act="${act}" title="${title}" aria-label="${title}" ${off ? 'disabled' : ''}>${text}</button>`;
+      const acts = (n.type === 'part'
+        ? btn('up', '↑', two ? 'Move up the line (swap with the fitting before)' : 'Only two-ended fittings can be moved', !two)
+          + btn('down', '↓', two ? 'Move down the line (swap with the fitting after)' : 'Only two-ended fittings can be moved', !two) : '')
+        + btn('del', '×', n.type === 'pipe' ? 'Remove this pipe: the parts either side join up' : 'Remove: the parts either side join up, the rest stays where it is');
       html += `<div class="${cls}" data-node="${n.id}" style="padding-left:${6 + depth * 10}px" title="${esc(errById.get(n.id) || '')}">`
-        + `${esc(n.tag ? `${n.tag} – ` : '')}${esc(name)}<span class="meta">${esc(extra)}</span></div>`;
+        + `<span class="nm">${n.align ? '🔒 ' : ''}${esc(n.tag ? `${n.tag} – ` : '')}${esc(name)}</span><span class="meta">${esc(extra)}</span><span class="acts">${acts}</span></div>`;
       walk(n.id, depth + 1);
     }
   };
@@ -713,12 +862,14 @@ function renderProps() {
     el.innerHTML = `<h3>How to</h3><p class="hint">1. Pick a part on the left – it goes on the <b>orange</b> end.<br>
       2. Select it to roll it (<kbd>R</kbd>) or turn it round (<kbd>X</kbd>).<br>
       3. Click a pipe or its dimension to set the centre-to-centre.<br>
-      Click a blue marker to carry on from another open end.</p>`;
+      Click a blue marker to carry on from another open end (<kbd>P</kbd> puts a pipe on it).<br>
+      In the Spool list, <b>↑ ↓</b> swap a fitting with its neighbour and <b>×</b> removes one (the rest stays put).</p>`;
     return;
   }
   const err = solved.errors.filter((e) => e.id === n.id).map((e) => esc(e.message)).join('<br>');
   if (n.type === 'pipe') {
     const down = childAt(n.id, 'B');
+    const lockedBy = state.nodes.find((x) => x.align?.pipe === n.id);
     const cc = n.dim?.mode === 'cc';
     el.innerHTML = `
       <h4>Pipe ${esc(n.label)}</h4>
@@ -729,13 +880,20 @@ function renderProps() {
           <option value="cc" ${cc ? 'selected' : ''}>${down ? 'Centre to centre' : 'Centre to end'}</option>
           <option value="cut" ${cc ? '' : 'selected'}>Cut length</option>
         </select>
-        <span>mm</span><input id="propDim" type="number" min="0" step="1" value="${round(n.dim?.value ?? n.cut)}">
+        <span>mm</span><input id="propDim" type="number" min="0" step="1" value="${round(n.dim?.value ?? n.cut)}" ${lockedBy ? `disabled title="Set by lining up ${esc(nodeLabel(lockedBy))} – unlock it to edit"` : ''}>
         <span>Cut length</span><b>${round(n.cut)} mm</b>
       </div>
+      ${lockedBy ? `<div class="hint">🔒 Length set by lining up <b>${esc(nodeLabel(lockedBy))}</b>.</div>` : ''}
       <div class="btns">
-        <button id="propClose" title="No pipe: the parts weld or screw straight together">Close-coupled</button>
+        <button id="propClose" title="No pipe: the parts weld or screw straight together" ${lockedBy ? 'disabled' : ''}>Close-coupled</button>
         <button id="propBranch" title="Stab a weld nipple into this pipe to start a branch">Branch…</button>
-        <button id="propDel" class="danger" title="Delete this pipe and everything beyond it (Del)">Delete</button>
+        <button id="propInsert" title="Put a part (e.g. a valve) in the middle of this pipe; what is beyond stays where it is">Insert part…</button>
+        <button id="propAlign" title="Line this pipe's end up with another part or pipe">Align…</button>
+      </div>
+      ${alignHtml(n)}
+      <div class="btns">
+        <button id="propDel" class="danger" title="Remove this pipe: the parts either side join up (Del)">Remove</button>
+        <button id="propDelAll" class="link danger" title="Delete this pipe and everything beyond it (Shift+Del)">Delete with everything beyond</button>
       </div>
       ${err ? `<div class="msg">${err}</div>` : ''}`;
     const apply = () => setDim(n.id, $('propMode').value, $('propDim').value);
@@ -747,9 +905,12 @@ function renderProps() {
       setDim(n.id, mode, round(dimFromCut(mode, Math.max(n.cut, 0), a, b)));
     };
     $('propClose').onclick = () => setDim(n.id, 'cut', 0);
-    $('propBranch').onclick = () => { state.branchOn = n.id; renderPartList(); toast('Pick a weld nipple to stab into this pipe'); };
-    $('propDel').onclick = () => deleteNode(n.id);
-    setTimeout(() => { const f = $('propDim'); if (f && document.activeElement === document.body) { f.focus(); f.select(); } }, 30);
+    $('propBranch').onclick = () => { state.branchOn = n.id; state.insertAt = null; renderPartList(); toast('Pick a weld nipple to stab into this pipe'); };
+    $('propInsert').onclick = () => { state.insertAt = { pipe: n.id }; state.branchOn = null; renderPartList(); toast('Pick the part to put in this pipe'); };
+    wireAlign(n);
+    $('propDel').onclick = () => removeOne(n.id);
+    $('propDelAll').onclick = () => deleteNode(n.id);
+    setTimeout(() => { const f = $('propDim'); if (f && !f.disabled && document.activeElement === document.body) { f.focus(); f.select(); } }, 30);
     return;
   }
   if (n.type === 'start') {
@@ -784,6 +945,9 @@ function renderProps() {
   const p = partOf(n);
   const attachOpts = attachOptions(n);
   const free = (p?.ports || []).filter((q) => q.name !== n.port && !childAt(n.id, q.name));
+  // open ends that take a pipe (the first part's own start end too)
+  const ends = (p?.ports || []).filter((q) => (q.name !== n.port || !n.parent) && !childAt(n.id, q.name) && ['weld', 'bspF'].includes(q.family));
+  const runName = p ? runPort(p.ports, n.port) : null;
   el.innerHTML = `
     <h4>${esc(nodeLabel(n))}</h4>
     <div class="hint">${esc(p?.id || n.part)} – ${esc(p?.description || '')}</div>
@@ -802,9 +966,16 @@ function renderProps() {
         <input id="propRoll" type="number" step="15" value="${Number(n.roll) || 0}" aria-label="Roll angle in degrees">°
       </div>
     </div>
+    ${ends.length ? `<div class="ends"><span class="hint">Open ends:</span> ${ends.map((q) => `<button data-pipe-on="${q.name}" title="A straight pipe on this end (or click its blue marker and press P)">+ pipe on ${esc(portText(p, q).split(' – ')[0].toLowerCase())}</button>`).join(' ')}</div>` : ''}
     <div class="btns">
       <button id="propFlip" title="Attach by its next end (X)" ${attachOpts.length > 1 ? '' : 'disabled'}>Turn round</button>
-      <button id="propDel" class="danger" title="Delete this part and everything beyond it (Del)">Delete</button>
+      ${runName && childAt(n.id, runName) ? '<button id="propInsert" title="Put a part between this one and the next; what is beyond stays put when there is a pipe to shorten">Insert after…</button>' : ''}
+      <button id="propAlign" title="Line this part up with another part or pipe: same X, Y or RL, by centre or end face">Align…</button>
+    </div>
+    ${alignHtml(n)}
+    <div class="btns">
+      <button id="propDel" class="danger" title="Remove this part: the parts either side join up, the rest stays where it is (Del)">Remove</button>
+      <button id="propDelAll" class="link danger" title="Delete this part and everything beyond it (Shift+Del)">Delete with everything beyond</button>
     </div>
     ${err ? `<div class="msg">${err}</div>` : ''}`;
   $('propTag').onchange = (e) => commit(() => { n.tag = e.target.value.trim(); });
@@ -829,7 +1000,85 @@ function renderProps() {
   $('propRollP').onclick = () => rollNode(n.id, 90);
   $('propRoll').onchange = (e) => commit(() => { n.roll = Number(e.target.value) || 0; });
   $('propFlip').onclick = () => flipNode(n.id);
-  $('propDel').onclick = () => deleteNode(n.id);
+  if ($('propInsert')) $('propInsert').onclick = () => { state.insertAt = { node: n.id, port: runName }; state.branchOn = null; renderPartList(); toast('Pick the part to put after this one'); };
+  el.querySelectorAll('[data-pipe-on]').forEach((b) => { b.onclick = () => { state.active = `${n.id}:${b.dataset.pipeOn}`; addPipe(); }; });
+  wireAlign(n);
+  $('propDel').onclick = () => removeOne(n.id);
+  $('propDelAll').onclick = () => deleteNode(n.id);
+}
+
+// ------------------------------------------------------------------- align
+const AXIS_TEXT = { X: 'same X', Y: 'same Y', Z: 'same RL (Z)' };
+let alignSel = { at: 'centre', refAt: 'centre', axis: null, lock: false };
+
+/** Points of a node to line up: centre and its ends. */
+function alignPoints(n) {
+  if (n.type === 'pipe') return [['centre', 'Middle'], ['A', 'Start end'], ['B', 'Far end']];
+  if (n.type !== 'part') return [];
+  const p = partOf(n);
+  return [['centre', 'Centre'], ...(p?.ports || []).map((q) => [q.name, `${portText(p, q).split(' – ')[0]} face`])];
+}
+
+function alignHtml(n) {
+  if (n.align) {
+    const r = nodeById(n.align.ref);
+    return `<div class="align">🔒 Lined up with <b>${esc(nodeLabel(r))}</b>, ${AXIS_TEXT[n.align.axis]} (pipe ${esc(nodeLabel(nodeById(n.align.pipe)))} follows) <button id="alUnlock">Unlock</button></div>`;
+  }
+  if (state.alignFor !== n.id) return '';
+  if (!state.alignRef) return `<div class="align">Click the part or pipe to line this up with (in the view or the list). <button id="alCancel" class="link">Cancel</button></div>`;
+  const r = nodeById(state.alignRef);
+  const opts = (list, v) => list.map(([k, t]) => `<option value="${k}" ${k === v ? 'selected' : ''}>${esc(t)}</option>`).join('');
+  return `<div class="align"><div class="grid">
+      <span>This</span><select id="alAt">${opts(alignPoints(n), alignSel.at)}</select>
+      <span>With</span><select id="alRefAt">${opts(alignPoints(r), alignSel.refAt)}</select>
+      <span></span><span class="hint">of ${esc(nodeLabel(r))}</span>
+      <span>Line up</span><div class="seg" id="alAxis">${['X', 'Y', 'Z'].map((a) => `<button data-axis="${a}">${a === 'Z' ? 'RL (Z)' : a}</button>`).join('')}</div>
+    </div>
+    <label><input type="checkbox" id="alLock" ${alignSel.lock ? 'checked' : ''}> Keep lined up (lock)</label>
+    <div class="btns"><button id="alGo" class="primary">Align</button><button id="alCancel">Cancel</button></div>
+    <div id="alMsg" class="hint"></div></div>`;
+}
+
+function wireAlign(n) {
+  $('propAlign').onclick = () => {
+    state.alignFor = n.id; state.alignRef = null; state.insertAt = state.branchOn = null;
+    alignSel = { at: 'centre', refAt: 'centre', axis: null, lock: false };
+    renderProps(); renderPartList();
+  };
+  if ($('alUnlock')) $('alUnlock').onclick = () => commit(() => { delete n.align; });
+  if ($('alCancel')) $('alCancel').onclick = () => { state.alignFor = state.alignRef = null; draw(); renderTree(); renderProps(); };
+  if (!$('alGo')) return;
+  if (!alignPoints(nodeById(state.alignRef)).some(([k]) => k === alignSel.refAt)) alignSel.refAt = 'centre';
+  const refresh = () => {
+    alignSel.at = $('alAt').value; alignSel.refAt = $('alRefAt').value;
+    const ok = (a) => alignPipes(editCtx(), n.id, alignSel.at, state.alignRef, a).length > 0;
+    if (alignSel.axis && !ok(alignSel.axis)) alignSel.axis = null;
+    if (!alignSel.axis) alignSel.axis = ['X', 'Y', 'Z'].find(ok) || null;
+    $('alAxis').querySelectorAll('button').forEach((b) => {
+      b.disabled = !ok(b.dataset.axis);
+      b.title = b.disabled ? `No pipe along ${b.dataset.axis} between them to adjust` : `Give them the ${AXIS_TEXT[b.dataset.axis]}`;
+      b.classList.toggle('on', b.dataset.axis === alignSel.axis);
+    });
+    $('alGo').disabled = !alignSel.axis;
+    $('alMsg').textContent = alignSel.axis ? '' : 'No pipe between them runs along X, Y or Z to take up the difference.';
+  };
+  $('alAt').onchange = refresh;
+  $('alRefAt').onchange = refresh;
+  $('alLock').onchange = (e) => { alignSel.lock = e.target.checked; };
+  $('alAxis').onclick = (e) => { const b = e.target.closest('[data-axis]'); if (b && !b.disabled) { alignSel.axis = b.dataset.axis; refresh(); } };
+  refresh();
+  $('alGo').onclick = () => {
+    const spec = { id: n.id, at: alignSel.at, ref: state.alignRef, refAt: alignSel.refAt, axis: alignSel.axis };
+    let f;
+    try { f = alignFix(editCtx(), spec); } catch (e) { $('alMsg').textContent = e.message; return; }
+    const pipe = nodeById(f.pipe);
+    commit(() => {
+      setCut(pipe, f.cut);
+      if (alignSel.lock) n.align = { ref: spec.ref, refAt: spec.refAt, at: spec.at, axis: spec.axis, pipe: f.pipe };
+      state.alignFor = state.alignRef = null;
+    });
+    toast(`Lined up (${AXIS_TEXT[spec.axis]}): ${nodeLabel(pipe)} changed by ${round(Math.abs(f.delta))} mm${alignSel.lock ? ', locked' : ''}.`);
+  };
 }
 
 function renderStatus() {
@@ -1101,12 +1350,16 @@ function wire() {
   $('tree').onclick = (e) => {
     const it = e.target.closest('[data-node]');
     if (!it) return;
-    state.selected = it.dataset.node;
-    draw(); renderTree(); renderProps();
+    const act = e.target.closest('[data-act]')?.dataset.act;
+    const id = it.dataset.node;
+    if (act === 'del') { removeOne(id); return; }
+    if (act === 'up' || act === 'down') { moveOne(id, act === 'up' ? -1 : 1); return; }
+    pickNode(id);
   };
   $('viewport').addEventListener('click', (e) => {
     const lbl = e.target.closest('.dim-label[data-node]');
     if (!lbl) return;
+    if (state.alignFor) { pickNode(lbl.dataset.node); return; }
     state.selected = lbl.dataset.node;
     draw(); renderTree(); renderProps();
     setTimeout(() => { const f = $('propDim'); if (f) { f.focus(); f.select(); } }, 30);
@@ -1170,6 +1423,7 @@ function wire() {
       state.selected = state.active.split(':')[0];
     } else {
       const h = hits.find((x) => x.object.userData.nodeId);
+      if (state.alignFor) { if (h) pickNode(h.object.userData.nodeId); return; }
       state.selected = h ? h.object.userData.nodeId : null;
     }
     draw(); renderTree(); renderProps(); renderStatus(); renderPartList();
@@ -1190,13 +1444,16 @@ function wire() {
     else if (k === 's') addStartPoint();
     else if (k === 'r' && sel) rollNode(sel, e.shiftKey ? -90 : 90);
     else if (k === 'x' && sel) flipNode(sel);
-    else if ((k === 'delete' || k === 'backspace') && sel) { e.preventDefault(); deleteNode(sel); }
+    else if ((k === 'delete' || k === 'backspace') && sel) { e.preventDefault(); if (e.shiftKey) deleteNode(sel); else removeOne(sel); }
     else if (k === 'n' && open.length) {
       const keys = open.map((o) => `${o.nodeId}:${o.port.name}`);
       state.active = keys[(keys.indexOf(state.active) + 1) % keys.length];
       draw(); renderPartList();
     } else if (k === 'home') viewer.fit();
-    else if (k === 'escape') { state.selected = null; draw(); renderTree(); renderProps(); }
+    else if (k === 'escape') {
+      if (state.alignFor || state.insertAt || state.branchOn) { state.alignFor = state.alignRef = state.insertAt = state.branchOn = null; } else state.selected = null;
+      draw(); renderTree(); renderProps(); renderPartList();
+    }
   });
 }
 
@@ -1219,5 +1476,7 @@ async function init() {
     .then(() => { $('engine').hidden = true; })
     .catch((e) => { $('engine').textContent = `CAD engine failed to load: ${e.message}. Check the internet connection and reload the page.`; $('engine').classList.add('bad'); });
 }
+
+window.spoolDebug = () => ({ state, solved }); // for tests
 
 init().catch((e) => toast(`Failed to start: ${e.message}`, true, 10000));
